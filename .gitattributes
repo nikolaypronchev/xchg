@@ -1,0 +1,3 @@
+* text=auto eol=lf
+bin/xchg text eol=lf
+tests/run.sh text eol=lf
