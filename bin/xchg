@@ -661,6 +661,9 @@ cmd_hubs() {
 }
 init_hub_repo() {  # <путь> <логин>
   local p="$1" login="$2"; mkdir -p "$p"; git -C "$p" init -q
+  # имя ветки не должно зависеть от init.defaultBranch того, кто создаёт хаб:
+  # клон участника идёт за HEAD, и «master у одного, main у другого» ломает подключение
+  git -C "$p" symbolic-ref HEAD refs/heads/main
   cp "$XCHG_ROOT/hub/README.md" "$p/README.md"
   { echo "# Контакты"; echo; echo "| login | имя | алиасы | контакт |"; echo "|---|---|---|---|"; } > "$p/contacts.md"
   mkdir -p "$p/all" "$p/people/$login" "$p/projects"; touch "$p/all/.gitkeep" "$p/people/$login/.gitkeep" "$p/projects/.gitkeep"

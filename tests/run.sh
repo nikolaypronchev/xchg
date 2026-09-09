@@ -26,7 +26,10 @@ t "install и создание хаба"
 run "$X" install </dev/null; assert_eq "$RC" 0 "install rc"; assert_contains "$OUT" "хук SessionStart добавлен"
 run "$X" inbox --brief; assert_eq "$OUT" "" "без хабов хук молчит (0 байт)"
 git init -q --bare "$SB/bare-work"
+git config --global init.defaultBranch master   # ветка хаба не должна зависеть от локального дефолта
 run "$X" hub init work --remote "$SB/bare-work" --login alice; assert_eq "$RC" 0 "hub init"; assert_contains "$OUT" "хаб work создан"
+assert_eq "$(git -C "$H/exchange/work" branch --show-current)" main "хаб всегда на ветке main"
+git config --global init.defaultBranch main
 assert_contains "$(cat "$H/exchange/work/README.md")" "contract: 6"
 run "$X" hubs; assert_contains "$OUT" "work*"; assert_contains "$OUT" "alice"
 
