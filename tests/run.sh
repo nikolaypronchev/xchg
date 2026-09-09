@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# e2e-тесты xchg в песочнице: HOME подменяется, хабы — локальные bare-репо. Запуск: tests/run.sh [-v]
+# e2e-тесты xchg в песочнице: HOME подменяется, хабы — локальные bare-репозитории.
+# Запуск: tests/run.sh [-v]. Имена вымышленные: alice/bob/carol, проекты api и web.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 V=0; [ "${1:-}" = -v ] && V=1
@@ -15,140 +16,161 @@ assert_not_contains() { grep -qF -- "$2" <<< "$1" && fail "не должно б�
 assert_eq() { [ "$1" = "$2" ] && ok "$3" || fail "$3: «$1» != «$2»"; }
 run() { set +e; OUT=$("$@" 2>&1); RC=$?; set -e; }
 
-mk_hub() {  # <bare path> <login...>: bare-хаб по эталону
-  local bare="$1"; shift; local w="$SB/tmp-$(basename "$bare")"
-  git init -q --bare "$bare"; git clone -q "$bare" "$w" 2>/dev/null
-  cp "$ROOT/hub/README.md" "$w/"; { echo "# Контакты"; echo; echo "| login | имя | алиасы | проекты | контакт |"; echo "|---|---|---|---|---|"; } > "$w/contacts.md"
-  for l in "$@"; do mkdir -p "$w/people/$l/inbox"; touch "$w/people/$l/inbox/.gitkeep"; done
-  mkdir -p "$w/people/all/inbox" "$w/projects/demo/inbox"; touch "$w/people/all/inbox/.gitkeep" "$w/projects/demo/inbox/.gitkeep"
-  git -C "$w" add -A; git -C "$w" commit -q -m init; git -C "$w" push -q; rm -rf "$w"
-}
-# --- два хаба: work (pronchev, atanova=оля) и hobby (kolya, olya=оля)
-mk_hub "$SB/bare-work" pronchev atanova ostrovskiy
-mk_hub "$SB/bare-hobby" kolya olya vasya
-H1="$SB/home1"; mkdir -p "$H1"; export HOME="$H1"
-git clone -q "$SB/bare-work" "$H1/exchange"
-printf '| pronchev | Николай Прончев | коля, николай | trends | |\n| atanova | Ольга Атанова | оля, ольга | trends | |\n| ostrovskiy | Иван | | trends | |\n' >> "$H1/exchange/contacts.md"
-git -C "$H1/exchange" commit -qam contacts; git -C "$H1/exchange" push -q
-git -C "$H1/exchange" config xchg.me pronchev
+H="$SB/home"; mkdir -p "$H"; export HOME="$H"
+mkdir -p "$SB/repos/api" "$SB/repos/web" "$SB/repos/tool"
+for r in api web tool; do git init -q "$SB/repos/$r"; done
+in_api() { ( cd "$SB/repos/api" && "$@" ); }
+in_web() { ( cd "$SB/repos/web" && "$@" ); }
 
-t "v1-режим без xchg.conf"
-run "$X" inbox; assert_eq "$RC" 0 "inbox rc"; assert_contains "$OUT" "inbox пуст"
-run "$X" send оля hello --project trends <<< $'# Привет\nтело'; assert_eq "$RC" 0 "send rc"; assert_contains "$OUT" "отправлено: work:people/atanova/inbox/"
-F1=$(ls "$H1/exchange/people/atanova/inbox/"*.md); assert_eq "$(sed -n 's/^from: //p' "$F1")" pronchev "from = login"
-run "$X" inbox --brief; assert_eq "$OUT" "" "brief пуст для чужого ящика (0 байт)"
+t "install и создание хаба"
+run "$X" install </dev/null; assert_eq "$RC" 0 "install rc"; assert_contains "$OUT" "хук SessionStart добавлен"
+run "$X" inbox --brief; assert_eq "$OUT" "" "без хабов хук молчит (0 байт)"
+git init -q --bare "$SB/bare-work"
+run "$X" hub init work --remote "$SB/bare-work" --login alice; assert_eq "$RC" 0 "hub init"; assert_contains "$OUT" "хаб work создан"
+assert_contains "$(cat "$H/exchange/work/README.md")" "contract: 6"
+run "$X" hubs; assert_contains "$OUT" "work*"; assert_contains "$OUT" "alice"
 
-t "install: миграция ~/exchange → ~/exchange/work, conf, host, личный хаб"
-run "$X" install </dev/null; assert_eq "$RC" 0 "install rc"; assert_contains "$OUT" "перенесён"; assert_contains "$OUT" "личный хаб me создан"
-[ -d "$H1/exchange/work/.git" ] && ok "work в ~/exchange/work" || fail "нет ~/exchange/work"
-[ -d "$H1/exchange/me/.git" ] && ok "me создан" || fail "нет ~/exchange/me"
-assert_contains "$(cat "$H1/.config/xchg/xchg.conf")" "[hub work]"
-"$X" host set nb-wsl >/dev/null; assert_eq "$("$X" host)" nb-wsl "host set/get"
-assert_contains "$(jq -r '.hooks.SessionStart[].hooks[].command' "$H1/.claude/settings.json")" "xchg inbox --brief"
-run "$X" install </dev/null; assert_contains "$OUT" "хук SessionStart уже есть"
-run "$X" hub add hobby "$SB/bare-hobby" --login kolya; assert_eq "$RC" 0 "hub add rc"
-printf '| kolya | Коля | николай | | |\n| olya | Оля | оля | | |\n| vasya | Вася | | | |\n' >> "$H1/exchange/hobby/contacts.md"
-git -C "$H1/exchange/hobby" commit -qam contacts; git -C "$H1/exchange/hobby" push -q
-run "$X" hubs; assert_contains "$OUT" "work*"; assert_contains "$OUT" "hobby"; assert_contains "$OUT" "me"
+t "манифесты плагина"
+for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json commands/setup.md; do
+  [ -f "$ROOT/$f" ] && ok "есть $f" || fail "нет $f"
+done
+assert_contains "$(cat "$ROOT/hooks/hooks.json")" '${CLAUDE_PLUGIN_ROOT}/bin/xchg'
+assert_contains "$(cat "$ROOT/.claude-plugin/marketplace.json")" '"source": "./"'
+if command -v claude >/dev/null 2>&1; then
+  run claude plugin validate "$ROOT"; assert_eq "$RC" 0 "claude plugin validate"
+else ok "claude CLI нет — валидацию манифестов пропускаем"; fi
 
-t "адресация по нескольким хабам"
-run "$X" send оля x <<< "# x"; assert_eq "$RC" 1 "неоднозначный «оля» — ошибка"; assert_contains "$OUT" "есть в хабах: work:atanova hobby:olya"
-run "$X" send hobby:оля hi <<< "# hi hobby"; assert_eq "$RC" 0 "hobby:оля"; assert_contains "$OUT" "отправлено: hobby:people/olya/inbox/"
-run "$X" send вася hi <<< "# hi vasya"; assert_eq "$RC" 0 "уникальный «вася» → hobby"; assert_contains "$OUT" "hobby:people/vasya"
-run "$X" send @demo task <<< "# task"; assert_eq "$RC" 0 "@demo → default (work)"; assert_contains "$OUT" "work:projects/demo/inbox"
-run "$X" send hobby:@demo task2 <<< "# task2"; assert_contains "$OUT" "hobby:projects/demo/inbox"
-run "$X" send nobody x <<< "# x"; assert_eq "$RC" 1 "неизвестный адресат"; assert_contains "$OUT" "xchg who"
-run "$X" send work:atanova/agent1 x <<< "# x"; assert_eq "$RC" 1 "login/agent в общем хабе"; assert_contains "$OUT" "агентские ящики выключены"
-run "$X" who оля; assert_contains "$OUT" "work  | atanova"; assert_contains "$OUT" "hobby  | olya"
+t "регистрация: книга контактов и паспорта"
+assert_contains "$(cat "$H/exchange/work/contacts.md")" "| alice |"; ok "создатель хаба записан в книгу контактов"
+[ -d "$H/exchange/work/people/alice" ] && ok "каталог человека заведён" || fail "нет people/alice"
 
-t "inbox по хабам, read, done"
-# письмо себе в work и в hobby (от чужого имени — прямо в bare)
-W2="$SB/w2"; git clone -q "$SB/bare-work" "$W2"; printf -- '---\nfrom: atanova\nto: pronchev\ndate: 2026-09-08T10:00:00Z\n---\n# Вопрос по nav\nтекст\n' > "$W2/people/pronchev/inbox/20260908-100000_atanova_nav.md"
-git -C "$W2" add -A; git -C "$W2" commit -qm m; git -C "$W2" push -q
-run "$X" inbox; assert_contains "$OUT" "work     me        people/pronchev/inbox/20260908-100000_atanova_nav.md"; assert_contains "$OUT" "Вопрос по nav"
-assert_contains "$OUT" "hobby    @demo"; assert_contains "$OUT" "work     @demo"
-run "$X" inbox --brief; assert_contains "$OUT" "xchg: 3 новых сообщений"
-run "$X" inbox --hub hobby; assert_not_contains "$OUT" "work "
-run "$X" read people/pronchev/inbox/20260908-100000_atanova_nav.md; assert_contains "$OUT" "from: atanova"
-run "$X" read projects/demo/inbox; assert_eq "$RC" 1 "неоднозначный путь"; assert_contains "$OUT" "есть в хабах"
-run "$X" done "$H1/exchange/work/people/pronchev/inbox/20260908-100000_atanova_nav.md"; assert_eq "$RC" 0 "done по абсолютному пути"
-[ -e "$W2/people/pronchev/inbox/20260908-100000_atanova_nav.md" ] && { git -C "$W2" pull -q; [ -e "$W2/people/pronchev/inbox/20260908-100000_atanova_nav.md" ] && fail "done не долетел до origin" || ok "done запушен"; }
+t "проекты и идентичность агента"
+run in_api "$X" projects add api --repo "git@example.com:team/api.git"; assert_eq "$RC" 0 "projects add"
+assert_contains "$OUT" "проект заведён: work:projects/api"; assert_contains "$OUT" "агент зарегистрирован: work:@api:alice"
+assert_contains "$(cat "$H/exchange/work/projects/api/alice/README.md")" "Человек: alice"
+assert_contains "$(cat "$H/exchange/work/projects/api/README.md")" "Репозиторий: git@example.com:team/api.git"
+run in_api "$X" projects add api; assert_eq "$RC" 0 "повторный projects add не падает"; assert_contains "$OUT" "уже есть"
+run in_web "$X" projects add --repo "git@example.com:team/web.git"; assert_eq "$RC" 0 "projects add без имени, но с флагом"
+assert_contains "$OUT" "projects/web"; ok "имя проекта взято из репозитория"
+run in_api "$X" agent; assert_eq "$OUT" "work:@api:alice" "агент = человек × проект"
+run in_web "$X" agent; assert_eq "$OUT" "work:@web:alice" "в другом репозитории — другой агент"
+run bash -c "cd '$SB/repos/tool' && '$X' agent"; assert_contains "$OUT" "не заведён проектом"
+run bash -c "cd / && '$X' agent"; assert_eq "$RC" 1 "вне репозитория агента нет"
+run in_api "$X" projects; assert_contains "$OUT" "api              здесь"; assert_contains "$OUT" "git@example.com:team/api.git"
+
+t "адрес: порядок частей не важен, все уровни"
+printf '| bob | Борис Петров | боря | bob@example.com |\n| carol | Кэрол | | carol@example.com |\n' >> "$H/exchange/work/contacts.md"
+mkdir -p "$H/exchange/work/people/bob" "$H/exchange/work/people/carol"
+( cd "$H/exchange/work" && git add -A && git commit -qm contacts && git push -q )
+run in_api "$X" send @api:bob task1 <<< '# Задача агенту Бориса'; assert_eq "$RC" 0 "@api:bob"
+assert_contains "$OUT" "отправлено: work:projects/api/bob/"
+run in_api "$X" send bob:@api task2 <<< '# То же место, другой порядок'; assert_contains "$OUT" "work:projects/api/bob/"
+ok "user:project и project:user — один адрес"
+run in_api "$X" send боря task3 <<< '# Человеку по алиасу'; assert_contains "$OUT" "отправлено: work:people/bob/"
+run in_api "$X" send @web task4 <<< '# Всем на проекте web'; assert_contains "$OUT" "отправлено: work:projects/web/"
+run in_api "$X" post all news --ref "api/CHANGELOG.md" <<< '# Релиз 2.3'; assert_contains "$OUT" "отправлено: work:all/"
+run in_api "$X" send @nope x <<< '# x'; assert_eq "$RC" 1 "нет такого проекта"; assert_contains "$OUT" "xchg projects add nope"
+run in_api "$X" send nobody x <<< '# x'; assert_eq "$RC" 1 "нет такого человека"; assert_contains "$OUT" "xchg who"
+M=$(ls "$H/exchange/work/projects/api/bob/"*task1.md)
+assert_eq "$(sed -n 's/^from: //p' "$M")" "alice/api" "from = человек/проект"
+assert_eq "$(sed -n 's/^to: //p' "$M")" "@api:bob" "to = канонический адрес"
+assert_eq "$(sed -n 's/^kind: //p' "$M")" "task" "send создаёт задачу"
+assert_eq "$(sed -n 's/^kind: //p' "$(ls "$H/exchange/work/all/"*news.md)")" "note" "post создаёт заметку"
+
+t "inbox показывает только адреса этой сессии"
+# письма для alice кладём в хаб от имени других
+W2="$SB/w2"; git clone -q "$SB/bare-work" "$W2"
+mkdir -p "$W2/projects/api/alice" "$W2/projects/web/alice" "$W2/people/alice"
+printf -- '---\nfrom: bob/api\nto: @api:alice\nkind: task\ndate: 2026-09-09T10:00:00Z\n---\n# Поправь схему\n' > "$W2/projects/api/alice/20260909-100000_bob_schema.md"
+printf -- '---\nfrom: carol/web\nto: @web:alice\nkind: task\ndate: 2026-09-09T10:05:00Z\n---\n# Поправь шапку\n' > "$W2/projects/web/alice/20260909-100500_carol_head.md"
+printf -- '---\nfrom: bob/api\nto: alice\nkind: task\ndate: 2026-09-09T10:10:00Z\n---\n# Личная просьба\n' > "$W2/people/alice/20260909-101000_bob_personal.md"
+printf -- '---\nfrom: carol/web\nto: @api\nkind: task\ndate: 2026-09-09T10:15:00Z\n---\n# Задача в очередь api\n' > "$W2/projects/api/20260909-101500_carol_queue.md"
+printf -- '---\nfrom: carol/web\nto: all\nkind: note\ndate: 2026-09-09T10:20:00Z\nref: web/README.md\n---\n# Пятница короткий день\n' > "$W2/all/20260909-102000_carol_friday.md"
+( cd "$W2" && git add -A && git commit -qm msgs && git push -q )
+run in_api "$X" inbox
+assert_contains "$OUT" "Поправь схему"; assert_contains "$OUT" "Личная просьба"
+assert_contains "$OUT" "Задача в очередь api"; assert_contains "$OUT" "Пятница короткий день"
+assert_not_contains "$OUT" "Поправь шапку"
+assert_contains "$OUT" "в других проектах (xchg inbox --all)"
+run in_web "$X" inbox; assert_contains "$OUT" "Поправь шапку"; assert_not_contains "$OUT" "Поправь схему"
+run in_api "$X" inbox --all; assert_contains "$OUT" "Поправь шапку"; ok "--all снимает фильтр по проекту"
+run in_api "$X" inbox; assert_contains "$OUT" "@api:me"; assert_contains "$OUT" "задача"; assert_contains "$OUT" "заметка"
+
+t "заметки читаются курсором, задачи остаются"
+run in_api "$X" seen all; assert_contains "$OUT" "прочитано: work:all"
+run in_api "$X" inbox; assert_not_contains "$OUT" "Пятница короткий день"; ok "прочитанная заметка не мозолит глаза"
+run in_api "$X" inbox --history; assert_contains "$OUT" "Пятница короткий день"
+assert_contains "$(in_api "$X" inbox)" "Задача в очередь api"; ok "задача остаётся видимой"
+run in_web "$X" inbox; assert_contains "$OUT" "Пятница короткий день"; ok "курсор у каждого адреса свой, у web заметка ещё не прочитана"
+
+t "claim и done"
+Q=$(ls "$H/exchange/work/projects/api/"*queue.md)
+run in_api "$X" claim "$Q"; assert_eq "$RC" 0 "claim rc"; assert_contains "$OUT" "взято: work:projects/api/alice/"
+[ -f "$H/exchange/work/projects/api/alice/$(basename "$Q")" ] && ok "задача переехала в мой адрес" || fail "claim не переложил"
+run in_api "$X" claim "$H/exchange/work/projects/api/alice/$(basename "$Q")"; assert_eq "$RC" 1 "повторный claim"; assert_contains "$OUT" "уже у агента"
+# гонку выигрывает тот, кто первым запушил
+git -C "$W2" pull -q; printf -- '---\nfrom: carol/web\nto: @api\nkind: task\ndate: 2026-09-09T11:00:00Z\n---\n# Вторая задача\n' > "$W2/projects/api/20260909-110000_carol_second.md"
+( cd "$W2" && git add -A && git commit -qm t && git push -q ); "$X" sync >/dev/null
+git -C "$W2" mv projects/api/20260909-110000_carol_second.md projects/api/bob/ 2>/dev/null || { mkdir -p "$W2/projects/api/bob"; git -C "$W2" mv projects/api/20260909-110000_carol_second.md projects/api/bob/; }
+( cd "$W2" && git commit -qm claim && git push -q )
+run in_api "$X" claim "$H/exchange/work/projects/api/20260909-110000_carol_second.md"
+assert_eq "$RC" 1 "проигранная гонка"; assert_contains "$OUT" "уже взял bob"
+[ -z "$(git -C "$H/exchange/work" status --porcelain)" ] && ok "клон чист после проигрыша" || fail "клон грязный" "$(git -C "$H/exchange/work" status --short)"
+D=$(ls "$H/exchange/work/projects/api/alice/"*queue.md)
+run in_api "$X" done "$D"; assert_eq "$RC" 0 "done rc"; assert_contains "$OUT" "projects/api/alice/done/"
+run in_api "$X" inbox; assert_not_contains "$OUT" "Задача в очередь api"; ok "закрытая задача уходит из inbox"
+N=$(ls "$H/exchange/work/all/"*friday.md)
+run in_api "$X" done "$N"; assert_eq "$RC" 1 "заметку нельзя закрыть"; assert_contains "$OUT" "xchg seen"
+run in_api "$X" claim "$N"; assert_eq "$RC" 1 "заметку нельзя взять"
+
+t "reply и thread"
+P=$(ls "$H/exchange/work/people/alice/"*personal.md)
+run in_api "$X" reply "$P" ok <<< '# Сделал'; assert_eq "$RC" 0 "reply rc"
+assert_contains "$OUT" "отправлено: work:projects/api/bob/"; ok "ответ уходит агенту отправителя, а не человеку"
+R=$(ls -t "$H/exchange/work/projects/api/bob/"*ok.md | head -1)
+assert_contains "$(cat "$R")" "re: $(basename "$P")"
+run in_api "$X" thread "$R"; assert_contains "$OUT" "Личная просьба"; assert_contains "$OUT" "Сделал"; assert_contains "$OUT" "открыто"
+run in_api "$X" done "$P" ; run in_api "$X" thread "$R"; assert_contains "$OUT" "закрыто"; ok "закрытая задача читается из истории"
+run in_api "$X" sent; assert_contains "$OUT" "projects/api/bob/"; assert_contains "$OUT" "Сделал"
+
+t "второй хаб: свои агенты между собой"
+run "$X" hub init me --login alice; assert_eq "$RC" 0 "личный хаб"
+run in_api "$X" projects add api --hub me; assert_eq "$RC" 0 "проект api в личном хабе"
+run in_web "$X" projects add web --hub me; assert_eq "$RC" 0 "проект web в личном хабе"
+run in_api "$X" send me:@web:alice handoff <<< '# Продолжи миграцию'; assert_eq "$RC" 0 "агент пишет своему же агенту"
+assert_contains "$OUT" "отправлено: me:projects/web/alice/"
+run in_web "$X" inbox; assert_contains "$OUT" "Продолжи миграцию"; assert_contains "$OUT" "me"
+run in_api "$X" inbox; assert_not_contains "$OUT" "Продолжи миграцию"; ok "чужой адрес в этой сессии не показывается"
+run in_api "$X" send @api:alice self <<< '# Записка себе'; assert_contains "$OUT" "есть в хабах: work me"
+ok "одинаковый адрес в двух хабах — ошибка с перечнем"
+run in_api "$X" send me:@api:alice self <<< '# Записка себе'; assert_eq "$RC" 0 "префикс хаба снимает неоднозначность"
 
 t "forward между хабами"
-SRC=$(ls "$H1/exchange/work/projects/demo/inbox/"*.md | head -1)
-run "$X" forward "$SRC" hobby:вася --note "перекинь, пожалуйста"; assert_eq "$RC" 0 "forward rc"; assert_contains "$OUT" "переслано: hobby:people/vasya/inbox/"
-FW=$(ls -t "$H1/exchange/hobby/people/vasya/inbox/"*fwd*.md | head -1)
-assert_contains "$(cat "$FW")" "forwarded_from: work/projects/demo/inbox/"; assert_contains "$(cat "$FW")" "перекинь"; assert_contains "$(cat "$FW")" "# task"
-assert_eq "$(sed -n 's/^from: //p' "$FW")" kolya "from = login хаба назначения"
-[ -e "$SRC" ] && ok "оригинал не тронут" || fail "оригинал пропал"
+S=$(ls "$H/exchange/work/projects/api/alice/"*schema.md)
+run in_api "$X" forward "$S" me:@api:alice --note "перенесу к себе"; assert_eq "$RC" 0 "forward rc"
+FW=$(ls -t "$H/exchange/me/projects/api/alice/"*fwd*.md | head -1)
+assert_contains "$(cat "$FW")" "forwarded_from: work/projects/api/alice/"; assert_contains "$(cat "$FW")" "перенесу к себе"
+[ -e "$S" ] && ok "оригинал не тронут" || fail "оригинал пропал"
 
-t "секреты и контракт"
-run "$X" send hobby:вася key <<< $'# key\nAKIAABCDEFGHIJKLMNOP'; assert_eq "$RC" 0 "секрет не блокирует"; assert_contains "$OUT" "похоже на секрет"
-sed -i 's/^contract: 2/contract: 3/' "$H1/exchange/hobby/README.md"
-run "$X" send hobby:вася z <<< "# z"; assert_eq "$RC" 1 "контракт новее — отказ"; assert_contains "$OUT" "контракт 3"
-git -C "$H1/exchange/hobby" checkout -q README.md
-
-t "идентичность агента"
-mkdir -p "$SB/repos"; git init -q "$SB/repos/trends"; git -C "$SB/repos/trends" remote add origin ssh://git@example.com:2201/team/trends.git
-git init -q "$SB/repos/other/trends"; git -C "$SB/repos/other/trends" remote add origin git@github.com:someone/trends.git
-run bash -c "cd '$SB/repos/trends' && '$X' agent"; assert_eq "$OUT" "pronchev/trends" "login/agent из репо"
-assert_contains "$(cat "$H1/.config/xchg/agents.conf")" "trends = example.com:2201/team/trends"
-run bash -c "cd '$SB/repos/other/trends' && '$X' agent"; assert_eq "$RC" 3 "коллизия → код 3"; assert_contains "$OUT" "xchg agent set"
-run bash -c "cd '$SB/repos/other/trends' && '$X' agent set trends-gh && '$X' agent"; assert_contains "$OUT" "pronchev/trends-gh"
-git -C "$SB/repos/trends" worktree add -q "$SB/repos/trends-wt" -b wt 2>/dev/null || { git -C "$SB/repos/trends" commit -q --allow-empty -m i; git -C "$SB/repos/trends" worktree add -q "$SB/repos/trends-wt" -b wt; }
-run bash -c "cd '$SB/repos/trends-wt' && '$X' agent"; assert_eq "$OUT" "pronchev/trends" "worktree → тот же агент"
-run bash -c "cd / && '$X' agent"; assert_eq "$OUT" "pronchev/shell" "вне git → shell"
-run bash -c "cd / && XCHG_AGENT=custom '$X' agent"; assert_eq "$OUT" "pronchev/custom" "XCHG_AGENT"
-
-t "store: два host без конфликтов, доска"
-export XCHG_AGENT=trends   # store/board вызываются из cwd тестов, а не из репо
-git init -q --bare "$SB/bare-me"; run "$X" hub remote me "$SB/bare-me"; assert_eq "$RC" 0 "hub remote me"
-M1="$SB/mem1"; mkdir -p "$M1"; printf -- '---\nlast_updated: %s\n---\n# Goal\nСделать matcher\n\n# State\n- branch: main\n- last action: написал парсер\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$M1/SESSION.nb-wsl.md"
-run bash -c "cd '$SB/repos/trends' && '$X' store push '$M1' --as memory"; assert_eq "$RC" 0 "store push host1"; assert_contains "$OUT" "store: $M1 → me:agents/pronchev/trends/memory"
-[ -f "$H1/exchange/me/agents/pronchev/trends/memory/SESSION.nb-wsl.md" ] && ok "файл в хабе" || fail "файла нет в хабе"
-# второй host — другая установка (HOME2), тот же bare
-H2="$SB/home2"; mkdir -p "$H2/.config/xchg"; git clone -q "$SB/bare-me" "$H2/exchange/me"
-printf 'host = desk-win\ndefault = me\n[hub me]\nremote = %s\npath = ~/exchange/me\nlogin = pronchev\nagents = true\n' "$SB/bare-me" > "$H2/.config/xchg/xchg.conf"
-M2="$SB/mem2"; mkdir -p "$M2"
-run bash -c "cd '$SB/repos/trends' && HOME='$H2' '$X' store pull '$M2' --as memory"; assert_eq "$RC" 0 "store pull host2"
-[ -f "$M2/SESSION.nb-wsl.md" ] && ok "host2 видит SESSION.nb-wsl.md" || fail "pull не принёс файл host1"
-printf -- '---\nlast_updated: %s\n---\n# Goal\nСделать matcher (с desk-win)\n\n# State\n- last action: тесты\n' "$(date -u -d '+5 sec' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)" > "$M2/SESSION.desk-win.md"
-# параллельные push обоих host: оба должны пройти без конфликта
-printf -- '---\nlast_updated: %s\n---\n# Goal\nСделать matcher\n\n# State\n- last action: правка 2\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$M1/SESSION.nb-wsl.md"
-( cd "$SB/repos/trends" && "$X" store push "$M1" --as memory >/dev/null 2>&1; echo $? > "$SB/rc1" ) &
-( cd "$SB/repos/trends" && HOME="$H2" "$X" store push "$M2" --as memory >/dev/null 2>&1; echo $? > "$SB/rc2" ) &
-wait; assert_eq "$(cat "$SB/rc1")$(cat "$SB/rc2")" "00" "параллельные push обоих host прошли"
-CHK="$SB/chk"; git clone -q "$SB/bare-me" "$CHK"; assert_eq "$(ls "$CHK/agents/pronchev/trends/memory/" | sort | tr '\n' ' ')" "SESSION.desk-win.md SESSION.nb-wsl.md " "оба файла в origin"
-run "$X" store pull "$M1" --as memory; [ -f "$M1/SESSION.desk-win.md" ] && ok "host1 получил файл host2" || fail "host1 без файла host2"
-run bash -c "cd '$SB/repos/trends' && '$X' board"; assert_eq "$RC" 0 "board rc"; assert_contains "$OUT" "desk-win"; assert_contains "$OUT" "активен"; assert_contains "$OUT" "Сделать matcher (с desk-win)"
-run "$X" hosts; assert_contains "$OUT" "nb-wsl"; assert_contains "$OUT" "desk-win"; assert_contains "$OUT" "(этот)"
-run "$X" host set desk-win; assert_eq "$RC" 1 "занятый host не даёт выбрать"
-run "$X" inbox --brief; assert_contains "$OUT" "доска (me):"; assert_contains "$OUT" "trends@desk-win"
-run "$X" inbox --brief; assert_not_contains "$OUT" "доска"; ok "доска не повторяется без изменений"
-# общий файл без тега → отказ; с --force-shared и конфликт → .conflict.<host>
-echo a > "$M1/notes.md"; echo b > "$M1/notes.desk-win.md"
-run "$X" store push "$M1" --as memory; assert_eq "$RC" 1 "общий файл рядом с файлом другого host — отказ"; assert_contains "$OUT" "notes.md ↔ notes.desk-win.md"
-rm "$M1/notes.desk-win.md"; echo "v1" > "$M1/shared.md"; run "$X" store push "$M1" --as memory --force-shared; assert_eq "$RC" 0 "force-shared"
-run bash -c "HOME='$H2' '$X' store pull '$M2' --as memory"; echo "host1" > "$M1/shared.md"; echo "host2" > "$M2/shared.md"
-run "$X" store push "$M1" --as memory --force-shared; assert_eq "$RC" 0 "push host1"
-run bash -c "HOME='$H2' '$X' store push '$M2' --as memory --force-shared"; assert_eq "$RC" 0 "push host2 при конфликте не падает"; assert_contains "$OUT" "конфликт в agents/pronchev/trends/memory/shared.md"
-[ -f "$H2/exchange/me/agents/pronchev/trends/memory/shared.md.conflict.desk-win" ] && ok ".conflict.desk-win сохранён" || fail "нет .conflict файла" "$(ls "$H2/exchange/me/agents/pronchev/trends/memory/")"
-assert_eq "$(cat "$M2/shared.md")" host1 "чужая версия принята локально"
-[ -z "$(git -C "$H2/exchange/me" status --porcelain)" ] && ok "клон host2 чист" || fail "клон host2 грязный" "$(git -C "$H2/exchange/me" status --short)"
-run "$X" host rename nb-wsl nb-linux; assert_eq "$RC" 0 "host rename"; assert_eq "$("$X" host)" nb-linux "conf обновлён"
-[ -f "$H1/exchange/me/agents/pronchev/trends/memory/SESSION.nb-linux.md" ] && ok "файл переименован" || fail "файл не переименован"
-
-t "недоступный хаб"
-mv "$SB/bare-hobby" "$SB/bare-hobby.off"
-run "$X" inbox --brief; assert_eq "$RC" 0 "rc 0"; assert_contains "$OUT" "хаб hobby недоступен"
-run "$X" inbox --brief; assert_not_contains "$OUT" "недоступен"; ok "повтор молчит (раз в час)"
-mv "$SB/bare-hobby.off" "$SB/bare-hobby"
-run "$X" status; assert_eq "$RC" 0 "status"; assert_contains "$OUT" "host: nb-linux"
-sed -i '/^contract: 2/d' "$H1/exchange/work/README.md"   # хаб v1 без contract: — режим совместимости
-run "$X" send work:оля compat <<< "# compat"; assert_eq "$RC" 0 "хаб без contract: пишется как v1"; git -C "$H1/exchange/work" checkout -q README.md
-run "$X" hub rm hobby; assert_eq "$RC" 0 "hub rm"; run "$X" hubs; assert_not_contains "$OUT" "hobby"
+t "контакты, секреты, контракт, недоступный хаб"
+run "$X" contact --name "Алиса Иванова" --aliases "аля"; assert_contains "$OUT" "| alice | Алиса Иванова | аля |"
+run "$X" who аля; assert_contains "$OUT" "work  | alice"
+run "$X" who; assert_contains "$OUT" "проекты: api, web"; ok "участие выводится из каталогов агентов"
+run in_api "$X" send bob key <<< $'# ключ\nAKIAABCDEFGHIJKLMNOP'; assert_eq "$RC" 0 "секрет не блокирует"; assert_contains "$OUT" "похоже на секрет"
+run in_api "$X" post work:@api nofref <<< '# без ссылки'; assert_contains "$OUT" "без --ref"
+sed -i 's/^contract: 6/contract: 7/' "$H/exchange/work/README.md"
+run in_api "$X" send bob z <<< '# z'; assert_eq "$RC" 1 "чужой контракт — отказ"; assert_contains "$OUT" "контракт 7"
+git -C "$H/exchange/work" checkout -q README.md
+mv "$SB/bare-work" "$SB/bare-work.off"
+run in_api "$X" inbox --brief; assert_eq "$RC" 0 "недоступный хаб не валит inbox"; assert_contains "$OUT" "хаб work недоступен"
+run in_api "$X" inbox --brief; assert_not_contains "$OUT" "недоступен"; ok "повтор молчит (раз в час)"
+mv "$SB/bare-work.off" "$SB/bare-work"
+run "$X" status; assert_contains "$OUT" "контракт 6"
+run "$X" hub rm me; assert_eq "$RC" 0 "hub rm"; run "$X" hubs; assert_not_contains "$OUT" "me "
 
 t "ошибки конфига"
-printf 'host = x\n[hub a]\npath = /tmp/a\nbogus line\n' > "$H1/.config/xchg/xchg.conf"; run "$X" hubs; assert_eq "$RC" 1 "плохая строка — ошибка"; assert_contains "$OUT" "xchg.conf:4: не разобрал"
+printf 'default = a\n[hub a]\npath = /tmp/a\nbogus line\n' > "$H/.config/xchg/xchg.conf"
+run "$X" hubs; assert_eq "$RC" 1 "плохая строка — ошибка"; assert_contains "$OUT" "xchg.conf:4: не разобрал"
+run "$X" help; assert_eq "$RC" 0 "help работает и со сломанным конфигом"
 
 echo; echo "passed: $PASS, failed: $FAIL"; [ "$FAIL" = 0 ]

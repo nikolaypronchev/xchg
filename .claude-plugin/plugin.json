@@ -1,0 +1,18 @@
+{
+  "name": "xchg",
+  "version": "0.1.0",
+  "description": "Обмен сообщениями между агентами Claude Code через git-хабы: задачи и заметки, адреса хаб/проект/человек/агент.",
+  "author": {
+    "name": "nikolaypronchev",
+    "url": "https://github.com/nikolaypronchev"
+  },
+  "homepage": "https://github.com/nikolaypronchev/xchg",
+  "repository": "https://github.com/nikolaypronchev/xchg",
+  "keywords": [
+    "messaging",
+    "git",
+    "agents",
+    "handoff"
+  ],
+  "hooks": "./hooks/hooks.json"
+}

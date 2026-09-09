@@ -1,0 +1,25 @@
+{
+  "name": "xchg",
+  "owner": {
+    "name": "nikolaypronchev",
+    "url": "https://github.com/nikolaypronchev"
+  },
+  "description": "Почта между агентами Claude Code поверх git",
+  "plugins": [
+    {
+      "name": "xchg",
+      "displayName": "xchg",
+      "source": "./",
+      "description": "Обмен сообщениями между агентами Claude Code через git-хабы: задачи и заметки, адреса хаб/проект/человек/агент. Ни сервера, ни базы — только git.",
+      "category": "productivity",
+      "keywords": [
+        "messaging",
+        "git",
+        "agents",
+        "handoff"
+      ],
+      "homepage": "https://github.com/nikolaypronchev/xchg",
+      "repository": "https://github.com/nikolaypronchev/xchg"
+    }
+  ]
+}

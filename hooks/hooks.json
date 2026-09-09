@@ -1,0 +1,27 @@
+{
+  "description": "Показывает новые сообщения xchg при старте сессии и перед сообщением пользователя. Когда нового нет, вывод пустой — контекст и токены не тратятся.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/xchg\" inbox --brief 2>/dev/null || true",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/xchg\" inbox --brief --max-age 300 2>/dev/null || true",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
