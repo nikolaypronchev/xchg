@@ -20,6 +20,7 @@ MAX_AGE="${XCHG_MAX_AGE:-0}"           # секунд; >0 = не ходить н
 BRIEF=0                                # режим хука: недоступность хаба печатать не чаще раза в час
 SHOW_ALL=0                             # показывать чужие проекты
 SHOW_HISTORY=0                         # показывать уже прочитанные заметки
+HOOK_EVENT=""                          # событие хука Claude Code (из JSON на stdin)
 # хуки Claude Code запускаются без ssh-agent в окружении: подхватить типовой сокет, если есть
 [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.ssh/agent.sock" ] && export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 
@@ -360,7 +361,9 @@ mark_read() {  # <hub> <адрес> [файл|все непрочитанные]
 # Показываем: открытые задачи всегда, заметки — пока не прочитаны (курсор локальный).
 list_addr() {  # <hub> <адрес> -> строки для inbox
   local h="$1" rel="$2" f b k
-  while IFS= read -r f; do [ -n "$f" ] || continue; b=$(basename "$f"); k=$(kind_of "$f")
+  while IFS= read -r f; do [ -n "$f" ] || continue; b=$(basename "$f")
+    if [ "$SHOW_HISTORY" != 1 ] && is_muted "$h" "$b"; then continue; fi
+    k=$(kind_of "$f")
     if [ "$k" = task ]; then :
     elif [ "$SHOW_HISTORY" = 1 ]; then :
     elif is_read "$h" "$rel" "$b"; then continue; fi
@@ -368,13 +371,6 @@ list_addr() {  # <hub> <адрес> -> строки для inbox
       "$([ "$k" = task ] && echo задача || echo заметка)" "$rel/$b" "$(meta from "$f")" "$(title "$f")"
   done < <(msg_files "$(hub_path "$h")/$rel")
   return 0
-}
-count_addr() {  # <hub> <адрес> -> сколько там для меня нового
-  local h="$1" rel="$2" f b n=0
-  while IFS= read -r f; do [ -n "$f" ] || continue; b=$(basename "$f")
-    [ "$(kind_of "$f")" = task ] || is_read "$h" "$rel" "$b" || { n=$((n+1)); continue; }
-    [ "$(kind_of "$f")" = task ] && n=$((n+1)); done < <(msg_files "$(hub_path "$h")/$rel")
-  echo "$n"
 }
 write_msg() {  # <hub> <адрес> <kind> <from> <to> <slug> <re> <ref> <forwarded_from> <тело> -> путь
   local d="$(hub_path "$1")" f="$2/$(date -u +%Y%m%d-%H%M%S)_${4//\//-}_$6.md"
@@ -411,12 +407,16 @@ hub_filter() { [ -z "${OPT_HUB:-}" ] && { echo ${HUBS[@]+"${HUBS[@]}"}; return; 
 unsent_warn() { local h n; for h in "$@"; do hub_has_remote "$h" || continue
     n=$(git -C "$(hub_path "$h")" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
     [ "$n" -gt 0 ] && echo "хаб $h: $n не отправлено на origin (xchg sync)"; done; return 0; }
-others_note() {  # сколько нового лежит в моих других проектах
+others_note() {  # <all|new> <hub...> -> счётчик писем в моих других проектах (заглушённые не считаются)
   [ "$SHOW_ALL" = 1 ] && return 0
-  local h rel n total
-  for h in "$@"; do total=0
-    while IFS= read -r rel; do [ -n "$rel" ] || continue; n=$(count_addr "$h" "$rel"); total=$((total+n)); done < <(other_addrs "$h")
-    [ "$total" -gt 0 ] && echo "хаб $h: ещё $total $(plural "$total" 'сообщение' 'сообщения' 'сообщений') в других проектах (xchg inbox --all)"
+  local mode="$1" h rel lines n; shift
+  for h in "$@"; do
+    lines=$(while IFS= read -r rel; do [ -n "$rel" ] && list_addr "$h" "$rel"; done < <(other_addrs "$h"); true)
+    [ "$mode" = new ] && lines=$(printf '%s\n' "$lines" | unshown_lines)
+    n=$(printf '%s' "$lines" | grep -c . || true)
+    [ "$n" -gt 0 ] || continue
+    record_shown "$lines"
+    echo "хаб $h: ещё $n $(plural "$n" 'сообщение' 'сообщения' 'сообщений') в других проектах (xchg inbox --all)"
   done; return 0
 }
 cmd_inbox() {
@@ -427,14 +427,27 @@ cmd_inbox() {
     *) udie "inbox [--brief] [--all] [--history] [--max-age N] [--hub H]";; esac; done
   if [ ${#HUBS[@]} -eq 0 ]; then [ "$brief" = 1 ] && return 0; require_hubs; fi
   local hubs; hubs=$(hub_filter); sync_hubs $hubs
-  local out; out=$(inbox_lines $hubs)
-  record_shown "$out"
-  local others unsent; others=$(others_note $hubs); unsent=$(unsent_warn $hubs)
+  local out others unsent n mode=new
   if [ "$brief" = 1 ]; then
-    local n; n=$(printf '%s' "$out" | grep -c . || true)
-    [ "$n" -gt 0 ] && { echo "xchg: $n $(plural "$n" 'новое сообщение' 'новых сообщения' 'новых сообщений') (xchg inbox):"; echo "$out"; }
+    # Хук: при старте сессии — всё открытое (новая сессия не помнит бэклог), в остальных случаях —
+    # только то, что этому агенту ещё не показывали: иначе одни и те же строки шли бы в контекст на каждый промпт.
+    read_hook_input
+    [ "$HOOK_EVENT" = SessionStart ] && mode=all
+    out=$(inbox_lines $hubs)
+    [ "$mode" = new ] && out=$(printf '%s\n' "$out" | unshown_lines)
+    record_shown "$out"
+    others=$(others_note "$mode" $hubs); unsent=$(unsent_warn $hubs)
+    n=$(printf '%s' "$out" | grep -c . || true)
+    if [ "$n" -gt 0 ]; then
+      if [ "$mode" = all ]; then echo "xchg: в ящике $n $(plural "$n" 'сообщение' 'сообщения' 'сообщений') (xchg inbox):"
+      else echo "xchg: $n $(plural "$n" 'новое сообщение' 'новых сообщения' 'новых сообщений') (xchg inbox):"; fi
+      echo "$out"
+    fi
     [ -n "$others" ] && echo "$others"; [ -n "$unsent" ] && echo "$unsent"; return 0
   fi
+  out=$(inbox_lines $hubs)
+  record_shown "$out"
+  others=$(others_note all $hubs); unsent=$(unsent_warn $hubs)
   [ -n "$out" ] && echo "$out" || echo "новых сообщений нет"
   [ -n "$others" ] && echo "$others"; [ -n "$unsent" ] && echo "$unsent"; return 0
 }
@@ -458,6 +471,37 @@ mark_shown() {  # <hub> <имя файла>...
 record_shown() {  # <строки inbox>: пометить показанным всё, что в них есть
   local h rel; while read -r h _ _ rel _; do [ -n "${rel:-}" ] || continue; mark_shown "$h" "$(basename "$rel")"; done <<< "$1"; return 0
 }
+unshown_lines() {  # stdin: строки inbox -> только те, что этому агенту ещё не показывали
+  local line h rel
+  while IFS= read -r line; do [ -n "$line" ] || continue
+    read -r h _ _ rel _ <<< "$line"; is_shown "$h" "$(basename "$rel")" || printf '%s\n' "$line"; done
+  return 0
+}
+read_hook_input() {  # хук Claude Code подаёт JSON на stdin; вручную stdin — терминал, тогда не ждём
+  [ -t 0 ] && return 0
+  local j=""; IFS= read -r -t 1 -d '' j || true
+  HOOK_EVENT=$(printf '%s' "$j" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  return 0
+}
+# «Заглушено» — письмо не этому агенту: не показывать и не будить его. Пометка локальная и своя
+# у каждого агента, в хабе ничего не меняется. Ключ — имя файла, как у «показано».
+muted_file() { local p; p=$(cur_project); echo "$(hub_path "$1")/.git/xchg-muted/${p:-shell}"; }
+is_muted() { local f; f=$(muted_file "$1"); [ -f "$f" ] && grep -qxF "$2" "$f"; }
+set_muted() {  # <hub> <on|off> <имя файла>
+  local h="$1" mode="$2" name="$3" f; f=$(muted_file "$h"); mkdir -p "$(dirname "$f")"
+  { if [ -f "$f" ]; then cat "$f"; fi; if [ "$mode" = on ]; then echo "$name"; fi; } |
+    { if [ "$mode" = off ]; then grep -vxF "$name" || true; else cat; fi; } | sort -u > "$f.tmp" && mv "$f.tmp" "$f"
+}
+cmd_mute() {
+  require_hubs; [ $# -gt 0 ] || udie "mute <файл>..."
+  local a d who; who=$(cur_project); who="${who:-shell}"
+  for a in "$@"; do
+    locate "$a"; d="$(hub_path "$L_HUB")"; [ -f "$d/$L_REL" ] || die "нет файла $L_HUB:$L_REL"
+    set_muted "$L_HUB" on "$(basename "$L_REL")"; mark_shown "$L_HUB" "$(basename "$L_REL")"
+    if [ "$(kind_of "$d/$L_REL")" = note ]; then mark_read "$L_HUB" "$(dirname "$L_REL")" "$L_REL"; fi
+    echo "заглушено для агента @${who}: $L_HUB:$L_REL"
+  done
+}
 cmd_wait() {
   local timeout=0 interval=30
   while [ $# -gt 0 ]; do case "$1" in
@@ -470,8 +514,7 @@ cmd_wait() {
   BRIEF=1; MAX_AGE=0; XCHG_NO_SELFUPDATE=1   # не обновлять клиент посреди ожидания: bash дочитывает скрипт по ходу исполнения
   while :; do
     sync_hubs $hubs >/dev/null 2>&1 || true
-    new=$(inbox_lines $hubs | while IFS= read -r line; do
-            read -r h _ _ rel _ <<< "$line"; is_shown "$h" "$(basename "$rel")" || printf '%s\n' "$line"; done; true)
+    new=$(inbox_lines $hubs | unshown_lines)
     if [ -n "$new" ]; then
       n=$(printf '%s\n' "$new" | grep -c .)
       echo "xchg: $n $(plural "$n" 'новое сообщение' 'новых сообщения' 'новых сообщений') (xchg inbox):"; echo "$new"
@@ -590,6 +633,7 @@ cmd_claim() {  # взять задачу себе: файл переезжает
   esac
   dst="projects/$p/$me/$b"; check_contract "$h"
   mkdir -p "$d/projects/$p/$me"; git -C "$d" mv "$rel" "$dst"
+  set_muted "$h" off "$b"   # взятое себе больше не «не моё»
   if hub_push "$h" "[xchg] $me claim @$p: $b"; then echo "взято: $h:$dst"; return 0; fi
   local ahead; ahead=$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
   [ "$ahead" = 1 ] && git -C "$d" reset -q --hard '@{u}'
@@ -843,6 +887,7 @@ xchg — обмен сообщениями между агентами Claude Co
   claim <файл>                              взять задачу себе (атомарно, через git)
   done <файл>                               закрыть задачу (уезжает в done/)
   seen [адрес|файл]                         пометить заметки прочитанными
+  mute <файл>...                            не моё: не показывать и не будить этого агента
   sent                                      мои сообщения, которые ещё открыты
   thread <файл>                             переписка по re:, включая закрытые
   forward <файл> <адрес> [--note «…»]       переслать в другой хаб
@@ -862,6 +907,7 @@ case "${1:-help}" in help|-h|--help) cmd_help; exit 0;; version) cmd_version; ex
 load_conf
 case "${1:-help}" in
   wait) shift; cmd_wait "$@";;
+  mute) shift; cmd_mute "$@";;
   inbox) shift; cmd_inbox "$@";;   read) shift; cmd_read "$@";;      send) shift; cmd_send "$@";;
   post) shift; cmd_post "$@";;     reply) shift; cmd_reply "$@";;    claim) shift; cmd_claim "$@";;
   done) shift; cmd_done "$@";;     seen) shift; cmd_seen "${1:-}";;  sent) cmd_sent;;

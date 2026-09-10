@@ -162,6 +162,36 @@ run in_api "$X" claim "$H/exchange/work/projects/api/20260910-091000_carol_q2.md
 run in_api "$X" wait --timeout 2 --interval 1; assert_eq "$RC" 3 "взятая задача переехала, но повторно не будит"
 run in_api "$X" wait --timeout abc; assert_eq "$RC" 2 "неверный таймаут — ошибка вызова"
 
+t "mute и хуки: чужое письмо не будит и не повторяется"
+hook() { local ev="$1"; shift; printf '{"session_id":"t","hook_event_name":"%s"}' "$ev" | "$@"; }
+git -C "$W2" pull -q
+printf -- '---\nfrom: carol/web\nto: alice\nkind: task\ndate: 2026-09-10T10:00:00Z\n---\n# Не для агента api\n' > "$W2/people/alice/20260910-100000_carol_notmine.md"
+( cd "$W2" && git add -A && git commit -qm notmine && git push -q )
+run in_api hook UserPromptSubmit "$X" inbox --brief; assert_contains "$OUT" "Не для агента api"; ok "новое письмо хук показывает"
+run in_api hook UserPromptSubmit "$X" inbox --brief; assert_eq "$OUT" "" "повторный хук на то же молчит (0 байт)"
+run in_api hook SessionStart "$X" inbox --brief; assert_contains "$OUT" "xchg: в ящике"; assert_contains "$OUT" "Не для агента api"
+ok "старт сессии показывает открытое заново"
+NM="$H/exchange/work/people/alice/20260910-100000_carol_notmine.md"
+run in_api "$X" mute; assert_eq "$RC" 2 "mute без файла — ошибка вызова"
+run in_api "$X" mute "$NM"; assert_eq "$RC" 0 "mute"; assert_contains "$OUT" "заглушено для агента @api"
+run in_api "$X" inbox; assert_not_contains "$OUT" "Не для агента api"; ok "в inbox этого агента не видно"
+run in_api "$X" inbox --history; assert_contains "$OUT" "Не для агента api"
+run in_api hook SessionStart "$X" inbox --brief; assert_not_contains "$OUT" "Не для агента api"; ok "и при старте сессии тоже"
+run in_web "$X" inbox; assert_contains "$OUT" "Не для агента api"; ok "другой агент того же человека письмо видит"
+[ -f "$NM" ] && ok "в хабе письмо не тронуто" || fail "mute изменил хаб"
+git -C "$W2" pull -q
+printf -- '---\nfrom: carol/web\nto: @web\nkind: task\ndate: 2026-09-10T10:05:00Z\n---\n# Задача web\n' > "$W2/projects/web/20260910-100500_carol_webtask.md"
+( cd "$W2" && git add -A && git commit -qm webtask && git push -q )
+run in_api hook UserPromptSubmit "$X" inbox --brief; assert_contains "$OUT" "ещё 1 сообщение в других проектах"
+run in_api hook UserPromptSubmit "$X" inbox --brief; assert_not_contains "$OUT" "в других проектах"; ok "счётчик другого проекта не повторяется"
+git -C "$W2" pull -q
+printf -- '---\nfrom: carol/web\nto: @api\nkind: task\ndate: 2026-09-10T10:10:00Z\n---\n# Сначала заглушу, потом возьму\n' > "$W2/projects/api/20260910-101000_carol_later.md"
+( cd "$W2" && git add -A && git commit -qm later && git push -q ); "$X" sync >/dev/null
+LT="$H/exchange/work/projects/api/20260910-101000_carol_later.md"
+run in_api "$X" mute "$LT"; assert_eq "$RC" 0 "mute задачи из очереди"
+run in_api "$X" claim "$LT"; assert_eq "$RC" 0 "claim заглушённой задачи"
+run in_api "$X" inbox; assert_contains "$OUT" "Сначала заглушу, потом возьму"; ok "взятая себе задача снова видна"
+
 t "второй хаб: свои агенты между собой"
 run "$X" hub init me --login alice; assert_eq "$RC" 0 "личный хаб"
 run in_api "$X" projects add api --hub me; assert_eq "$RC" 0 "проект api в личном хабе"
