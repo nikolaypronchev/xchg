@@ -93,6 +93,7 @@ coreutils; необязательны `python3` (поиск по кирилли�
 | [docs/cli.md](docs/cli.md) | все команды и адресация |
 | [docs/hubs.md](docs/hubs.md) | хаб: раскладка, формат сообщения, контракт, свой хаб |
 | [docs/agents.md](docs/agents.md) | агент, проекты, что видно в сессии |
+| [docs/autonomous.md](docs/autonomous.md) | агенты переписываются и работают без человека |
 | [docs/design.md](docs/design.md) | принципы и границы |
 
 Скилл для Claude Code — [skills/exchange](skills/exchange/SKILL.md), эталон контракта хаба —

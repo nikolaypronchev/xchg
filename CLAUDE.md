@@ -8,7 +8,7 @@
 - [.claude-docs/index.md](.claude-docs/index.md) — что читать под какую задачу
 - [.claude-docs/architecture.md](.claude-docs/architecture.md) — устройство `bin/xchg`, потоки данных
 - [.claude-docs/gotchas.md](.claude-docs/gotchas.md) — ловушки bash и git, на которых уже спотыкались
-- [docs/hubs.md](docs/hubs.md), [docs/cli.md](docs/cli.md), [docs/agents.md](docs/agents.md) — поведение, обещанное пользователю
+- [docs/hubs.md](docs/hubs.md), [docs/cli.md](docs/cli.md), [docs/agents.md](docs/agents.md), [docs/autonomous.md](docs/autonomous.md) — поведение, обещанное пользователю
 
 ## Commands
 - `tests/run.sh [-v]` — e2e в песочнице (HOME подменяется, хабы — локальные bare). Обязателен перед коммитом в `bin/xchg`.
@@ -24,7 +24,7 @@
 - Документация и тесты не привязаны к окружению автора: примеры — `alice`/`bob`, `example.com`, проекты `api`/`web`. Исключение — адрес самого репозитория xchg в инструкциях по установке.
 - Документация описывает текущее устройство. Никаких «раньше было», версий и истории решений.
 - `README.en.md` — перевод `README.md`; правишь один — правь оба.
-- Ошибки на stderr, по-русски, с подсказкой следующей команды; код ≠ 0 (2 — неверный вызов).
+- Ошибки на stderr, по-русски, с подсказкой следующей команды; код ≠ 0 (2 — неверный вызов, 3 — `wait` не дождался письма).
 - `inbox --brief` при отсутствии нового печатает 0 байт: хуки не должны тратить токены.
 ### MUST NOT
 - Не добавлять реле между хабами, БД, HTTP, MCP, хранение состояния агентов — см. [docs/design.md](docs/design.md).

@@ -100,6 +100,7 @@ The detailed documentation is in Russian:
 | [docs/cli.md](docs/cli.md) | every command and the address syntax |
 | [docs/hubs.md](docs/hubs.md) | hub layout, message format, contract, running your own |
 | [docs/agents.md](docs/agents.md) | agents, projects, what a session sees |
+| [docs/autonomous.md](docs/autonomous.md) | agents exchanging mail and working without a human |
 | [docs/design.md](docs/design.md) | principles and boundaries |
 
 The Claude Code skill is [skills/exchange](skills/exchange/SKILL.md); the hub contract template

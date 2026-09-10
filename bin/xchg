@@ -427,11 +427,8 @@ cmd_inbox() {
     *) udie "inbox [--brief] [--all] [--history] [--max-age N] [--hub H]";; esac; done
   if [ ${#HUBS[@]} -eq 0 ]; then [ "$brief" = 1 ] && return 0; require_hubs; fi
   local hubs; hubs=$(hub_filter); sync_hubs $hubs
-  local out h rel
-  out=$(for h in $hubs; do
-          while IFS= read -r rel; do list_addr "$h" "$rel"; done < <(my_addrs "$h")
-          if [ "$SHOW_ALL" = 1 ]; then while IFS= read -r rel; do list_addr "$h" "$rel"; done < <(other_addrs "$h"); fi
-        done; true)
+  local out; out=$(inbox_lines $hubs)
+  record_shown "$out"
   local others unsent; others=$(others_note $hubs); unsent=$(unsent_warn $hubs)
   if [ "$brief" = 1 ]; then
     local n; n=$(printf '%s' "$out" | grep -c . || true)
@@ -440,6 +437,54 @@ cmd_inbox() {
   fi
   [ -n "$out" ] && echo "$out" || echo "новых сообщений нет"
   [ -n "$others" ] && echo "$others"; [ -n "$unsent" ] && echo "$unsent"; return 0
+}
+inbox_lines() {  # <hub...> -> строки inbox для адресов этой сессии (с --all — и других проектов)
+  local h rel
+  for h in "$@"; do
+    while IFS= read -r rel; do list_addr "$h" "$rel"; done < <(my_addrs "$h")
+    if [ "$SHOW_ALL" = 1 ]; then while IFS= read -r rel; do list_addr "$h" "$rel"; done < <(other_addrs "$h"); fi
+  done; return 0
+}
+# --- ожидание без человека -----------------------------------------------------------------------
+# «Показано» — письма, которые этот агент уже видел: хук, inbox, прошлый wait. wait будит только
+# на непоказанное, иначе открытая задача или своё письмо будили бы агента снова и снова.
+# Ключ — имя файла: claim и done переносят файл, но имя не меняют.
+shown_file() { local p; p=$(cur_project); echo "$(hub_path "$1")/.git/xchg-shown/${p:-shell}"; }
+is_shown() { local f; f=$(shown_file "$1"); [ -f "$f" ] && grep -qxF "$2" "$f"; }
+mark_shown() {  # <hub> <имя файла>...
+  local h="$1" f x; f=$(shown_file "$h"); shift; mkdir -p "$(dirname "$f")"
+  { if [ -f "$f" ]; then cat "$f"; fi; for x in "$@"; do echo "$x"; done; } | sort -u > "$f.tmp" && mv "$f.tmp" "$f"
+}
+record_shown() {  # <строки inbox>: пометить показанным всё, что в них есть
+  local h rel; while read -r h _ _ rel _; do [ -n "${rel:-}" ] || continue; mark_shown "$h" "$(basename "$rel")"; done <<< "$1"; return 0
+}
+cmd_wait() {
+  local timeout=0 interval=30
+  while [ $# -gt 0 ]; do case "$1" in
+    --timeout) timeout="${2:-}"; shift 2;; --interval) interval="${2:-}"; shift 2;;
+    --hub) OPT_HUB="$2"; shift 2;; --all) SHOW_ALL=1; shift;;
+    *) udie "wait [--timeout сек] [--interval сек] [--all] [--hub H]";; esac; done
+  { [[ "$timeout" =~ ^[0-9]+$ ]] && [[ "$interval" =~ ^[1-9][0-9]*$ ]]; } || udie "wait: --timeout и --interval — целые секунды (--interval от 1)"
+  require_hubs
+  local hubs start line h rel new n pause left; hubs=$(hub_filter); start=$(now_epoch)
+  BRIEF=1; MAX_AGE=0; XCHG_NO_SELFUPDATE=1   # не обновлять клиент посреди ожидания: bash дочитывает скрипт по ходу исполнения
+  while :; do
+    sync_hubs $hubs >/dev/null 2>&1 || true
+    new=$(inbox_lines $hubs | while IFS= read -r line; do
+            read -r h _ _ rel _ <<< "$line"; is_shown "$h" "$(basename "$rel")" || printf '%s\n' "$line"; done; true)
+    if [ -n "$new" ]; then
+      n=$(printf '%s\n' "$new" | grep -c .)
+      echo "xchg: $n $(plural "$n" 'новое сообщение' 'новых сообщения' 'новых сообщений') (xchg inbox):"; echo "$new"
+      record_shown "$new"; return 0
+    fi
+    pause="$interval"
+    if [ "$timeout" -gt 0 ]; then
+      left=$(( start + timeout - $(now_epoch) ))
+      [ "$left" -gt 0 ] || { echo "xchg: за ${timeout} с новых сообщений нет" >&2; exit 3; }
+      [ "$left" -lt "$pause" ] && pause="$left"
+    fi
+    sleep "$pause"
+  done
 }
 cmd_read() { require_hubs; [ -n "${1:-}" ] || udie "read <файл>"; locate "$1"; sync_hubs "$L_HUB"
   local f="$(hub_path "$L_HUB")/$L_REL"; [ -f "$f" ] || die "нет файла $L_HUB:$L_REL"; cat "$f"; }
@@ -510,7 +555,7 @@ send_common() {  # <kind> <адрес> <slug> [флаги] < тело
   warn_secrets "$body"
   [ "$kind" = note ] && [ -z "$ref" ] && warn "без --ref заметка не говорит, где смотреть актуальное состояние (репозиторий, файл, PR)"
   hub_push "$A_HUB" "[xchg] $from -> $A_LABEL: $slug" || true
-  mark_read "$A_HUB" "$A_REL" "$f"
+  mark_read "$A_HUB" "$A_REL" "$f"; mark_shown "$A_HUB" "$(basename "$f")"
   echo "отправлено: $A_HUB:$f"
 }
 cmd_send() { require_hubs; [ $# -ge 2 ] || udie "send <адрес> <slug> [--re файл] [--ref куда] < тело"; send_common task "$@"; }
@@ -529,7 +574,7 @@ cmd_reply() {
   local me nf; me=$(sender_id "$A_HUB")
   nf=$(write_msg "$A_HUB" "$A_REL" "$kind" "$me" "$A_LABEL" "$slug" "$(basename "$L_REL")" "" "" "$body")
   warn_secrets "$body"
-  hub_push "$A_HUB" "[xchg] $me -> $A_LABEL: $slug (ответ)" || true; echo "отправлено: $A_HUB:$nf"
+  mark_shown "$A_HUB" "$(basename "$nf")"; hub_push "$A_HUB" "[xchg] $me -> $A_LABEL: $slug (ответ)" || true; echo "отправлено: $A_HUB:$nf"
 }
 cmd_claim() {  # взять задачу себе: файл переезжает в адрес моего агента
   require_hubs; [ -n "${1:-}" ] || udie "claim <файл>"
@@ -581,7 +626,7 @@ cmd_forward() {
   slug=$(basename "$L_REL" .md); slug="${slug#*_}"; slug="${slug#*_}"; slug="fwd-${slug:-msg}"
   body=$( [ -n "$note" ] && printf '%s\n\n' "$note"; printf -- '--- переслано из %s (от %s) ---\n' "$L_HUB" "$(meta from "$sd")"; body_of "$sd" )
   local f; f=$(write_msg "$A_HUB" "$A_REL" "$kind" "$from" "$A_LABEL" "$slug" "" "$(meta ref "$sd")" "$L_HUB/$L_REL" "$body")
-  hub_push "$A_HUB" "[xchg] $from -> $A_LABEL: $slug (переслано)" || true; echo "переслано: $A_HUB:$f"
+  mark_shown "$A_HUB" "$(basename "$f")"; hub_push "$A_HUB" "[xchg] $from -> $A_LABEL: $slug (переслано)" || true; echo "переслано: $A_HUB:$f"
 }
 
 # --- люди, проекты, хабы ----------------------------------------------------------------------
@@ -790,6 +835,7 @@ xchg — обмен сообщениями между агентами Claude Co
   bob              человеку              @api:bob      агенту: человек × проект
 
   inbox [--brief] [--all] [--history] [--max-age N] [--hub H]   что мне пришло
+  wait [--timeout сек] [--interval сек]       ждать нового письма без участия модели (0 — пришло, 3 — таймаут)
   read <файл>                               прочитать сообщение целиком
   send <адрес> <slug> [--re f] [--ref x]    задача: выполнить один раз, закрывается
   post <адрес> <slug> [--re f] [--ref x]    заметка: прочитать каждому, не закрывается
@@ -815,6 +861,7 @@ OPT_HUB="${XCHG_HUB:-}"
 case "${1:-help}" in help|-h|--help) cmd_help; exit 0;; version) cmd_version; exit 0;; esac
 load_conf
 case "${1:-help}" in
+  wait) shift; cmd_wait "$@";;
   inbox) shift; cmd_inbox "$@";;   read) shift; cmd_read "$@";;      send) shift; cmd_send "$@";;
   post) shift; cmd_post "$@";;     reply) shift; cmd_reply "$@";;    claim) shift; cmd_claim "$@";;
   done) shift; cmd_done "$@";;     seen) shift; cmd_seen "${1:-}";;  sent) cmd_sent;;

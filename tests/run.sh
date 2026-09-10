@@ -141,6 +141,27 @@ run in_api "$X" thread "$R"; assert_contains "$OUT" "Личная просьба
 run in_api "$X" done "$P" ; run in_api "$X" thread "$R"; assert_contains "$OUT" "закрыто"; ok "закрытая задача читается из истории"
 run in_api "$X" sent; assert_contains "$OUT" "projects/api/bob/"; assert_contains "$OUT" "Сделал"
 
+t "wait: ожидание без человека"
+git -C "$W2" pull -q
+run in_api "$X" inbox; assert_eq "$RC" 0 "inbox перед ожиданием"
+run in_api "$X" wait --timeout 2 --interval 1; assert_eq "$RC" 3 "уже показанное не будит"; assert_contains "$OUT" "новых сообщений нет"
+( sleep 2; git -C "$W2" pull -q
+  printf -- '---\nfrom: bob/api\nto: @api:alice\nkind: task\ndate: 2026-09-10T09:00:00Z\n---\n# Проснись\n' > "$W2/projects/api/alice/20260910-090000_bob_wake.md"
+  ( cd "$W2" && git add -A && git commit -qm wake && git push -q ) ) &
+BG=$!
+run in_api "$X" wait --timeout 30 --interval 1; wait "$BG" 2>/dev/null || true
+assert_eq "$RC" 0 "новое письмо будит"; assert_contains "$OUT" "Проснись"; assert_contains "$OUT" "xchg: 1 новое сообщение"
+run in_api "$X" wait --timeout 2 --interval 1; assert_eq "$RC" 3 "то же письмо повторно не будит"
+run in_api "$X" send @api:alice note-to-self <<< '# Записка себе'
+run in_api "$X" wait --timeout 2 --interval 1; assert_eq "$RC" 3 "своё письмо не будит"
+git -C "$W2" pull -q
+printf -- '---\nfrom: carol/web\nto: @api\nkind: task\ndate: 2026-09-10T09:10:00Z\n---\n# Очередь для claim\n' > "$W2/projects/api/20260910-091000_carol_q2.md"
+( cd "$W2" && git add -A && git commit -qm q2 && git push -q )
+run in_api "$X" inbox; assert_contains "$OUT" "Очередь для claim"
+run in_api "$X" claim "$H/exchange/work/projects/api/20260910-091000_carol_q2.md"; assert_eq "$RC" 0 "claim показанной задачи"
+run in_api "$X" wait --timeout 2 --interval 1; assert_eq "$RC" 3 "взятая задача переехала, но повторно не будит"
+run in_api "$X" wait --timeout abc; assert_eq "$RC" 2 "неверный таймаут — ошибка вызова"
+
 t "второй хаб: свои агенты между собой"
 run "$X" hub init me --login alice; assert_eq "$RC" 0 "личный хаб"
 run in_api "$X" projects add api --hub me; assert_eq "$RC" 0 "проект api в личном хабе"
