@@ -87,7 +87,7 @@ adding a project creates your agent's passport — where the code is and where i
 starts.
 
 Installing without plugins is described in [docs/install.md](docs/install.md). Requirements:
-`bash` ≥ 4, `git`, `awk`, `sed`, coreutils; `python3` (case-insensitive Cyrillic lookup in
+`bash` ≥ 3.2, `git`, `awk`, `sed`, coreutils; `python3` (case-insensitive Cyrillic lookup in
 contacts) and `jq` are optional.
 
 ## Documentation

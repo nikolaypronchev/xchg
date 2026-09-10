@@ -2,8 +2,8 @@
 
 ## Требования
 
-`bash` ≥ 4, `git`, `awk`, `sed`, coreutils — есть везде, где работает Claude Code (Linux, macOS,
-WSL, Git Bash). Необязательные:
+`bash` ≥ 3.2, `git`, `awk`, `sed`, coreutils — есть везде, где работает Claude Code (Linux, macOS,
+WSL, Git Bash); системного bash macOS достаточно, ставить новый не нужно. Необязательные:
 
 - `python3` — регистронезависимый поиск по кириллице в `contacts.md`. Без него работают точные
   совпадения и латиница.

@@ -43,6 +43,11 @@ if command -v claude >/dev/null 2>&1; then
   run claude plugin validate "$ROOT"; assert_eq "$RC" 0 "claude plugin validate"
 else ok "claude CLI нет — валидацию манифестов пропускаем"; fi
 
+t "совместимость с bash 3.2 (статически; живой прогон — tests/bash32.sh)"
+assert_eq "$(grep -c 'declare -A' "$X" || true)" 0 "нет ассоциативных массивов"
+BAD=$(LC_ALL=C awk '/\$[A-Za-z_][A-Za-z0-9_]*[\200-\377]/ {print FNR": "$0}' "$X")
+assert_eq "$BAD" "" "за именем переменной сразу нет не-ASCII (под set -u байт уходит в имя)"
+
 t "регистрация: книга контактов и паспорта"
 assert_contains "$(cat "$H/exchange/work/contacts.md")" "| alice |"; ok "создатель хаба записан в книгу контактов"
 [ -d "$H/exchange/work/people/alice" ] && ok "каталог человека заведён" || fail "нет people/alice"
@@ -170,6 +175,17 @@ run in_api "$X" inbox --brief; assert_not_contains "$OUT" "недоступен"
 mv "$SB/bare-work.off" "$SB/bare-work"
 run "$X" status; assert_contains "$OUT" "контракт 6"
 run "$X" hub rm me; assert_eq "$RC" 0 "hub rm"; run "$X" hubs; assert_not_contains "$OUT" "me "
+
+t "имя репозитория вне [a-z0-9._-]"
+mkdir -p "$SB/repos/TRENDS-Frontend"; git init -q "$SB/repos/TRENDS-Frontend"
+in_tf() { ( cd "$SB/repos/TRENDS-Frontend" && "$@" ); }
+run in_tf "$X" agent; assert_contains "$OUT" "xchg projects add trends-frontend"
+run in_tf "$X" projects add; assert_eq "$RC" 2 "без имени — отказ с подсказкой"
+assert_contains "$OUT" "xchg projects add trends-frontend"; assert_contains "$OUT" "git config xchg.project"
+run in_tf "$X" projects add trends-frontend; assert_eq "$RC" 0 "с нормализованным именем"
+assert_contains "$OUT" "теперь проект «trends-frontend»"
+assert_eq "$(git -C "$SB/repos/TRENDS-Frontend" config xchg.project)" trends-frontend "имя запомнено в репозитории"
+run in_tf "$X" agent; assert_eq "$OUT" "work:@trends-frontend:alice" "агент адресуем под новым именем"
 
 t "ошибки конфига"
 printf 'default = a\n[hub a]\npath = /tmp/a\nbogus line\n' > "$H/.config/xchg/xchg.conf"

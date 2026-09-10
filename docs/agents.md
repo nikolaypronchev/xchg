@@ -13,6 +13,10 @@
 git config xchg.project api
 ```
 
+Имя проекта — только `[a-z0-9._-]`. Если репозиторий называется иначе (например, `TRENDS-frontend`),
+`xchg projects add` без имени подскажет нормализованное, а `xchg projects add trends-frontend` в этом
+репозитории заведёт проект и сам запишет `xchg.project`.
+
 `xchg agent` печатает адреса этой сессии — по одному на хаб, где такой проект заведён:
 
 ```console

@@ -43,8 +43,8 @@ title() { grep -m1 '^# ' "$1" 2>/dev/null | sed 's/^# //' || true; }
 body_of() { awk 'NR==1 && $0!="---"{p=1} p{print;next} /^---$/{c++; if(c==2)p=1}' "$1"; }
 
 # --- конфиг: реестр хабов ------------------------------------------------------------------
-declare -a HUBS=()
-declare -A HUB_PATH=() HUB_REMOTE=() HUB_LOGIN=()
+# Реестр хабов — параллельные индексные массивы: ассоциативных нет в bash 3.2 (системный bash macOS).
+HUBS=() HUB_PATHS=() HUB_REMOTES=() HUB_LOGINS=()
 CFG_DEFAULT="" CONF_MODE="none"
 
 parse_conf() {  # INI на awk: key = value, секции [hub <name>], комментарии #; остальное — ошибка с номером строки
@@ -62,31 +62,38 @@ parse_conf() {  # INI на awk: key = value, секции [hub <name>], комм
   while IFS=$'\t' read -r tag a b c; do
     case "$tag" in
       E) die "$CONF:$a: $b";;
-      G) case "$a" in default) CFG_DEFAULT="$b";; *) die "$CONF: неизвестный ключ «$a»";; esac;;
-      H) HUBS+=("$a"); HUB_PATH[$a]=""; HUB_REMOTE[$a]=""; HUB_LOGIN[$a]="";;
+      G) case "$a" in default) CFG_DEFAULT="$b";; *) die "$CONF: неизвестный ключ «${a}»";; esac;;
+      H) hub_new "$a";;
       S) case "$b" in
-           path)   HUB_PATH[$a]=$(expand_tilde "$c");;
-           remote) HUB_REMOTE[$a]="$c";;
-           login)  HUB_LOGIN[$a]="$c";;
-           *) die "$CONF: неизвестный ключ «$b» в [hub $a]";;
+           path)   hub_set "$a" path "$(expand_tilde "$c")";;
+           remote) hub_set "$a" remote "$c";;
+           login)  hub_set "$a" login "$c";;
+           *) die "$CONF: неизвестный ключ «${b}» в [hub $a]";;
          esac;;
     esac
   done <<< "$out"
-  local h; for h in "${HUBS[@]}"; do [ -n "${HUB_PATH[$h]}" ] || HUB_PATH[$h]="$HOME/exchange/$h"; done
+  local h; for h in ${HUBS[@]+"${HUBS[@]}"}; do [ -n "$(hub_path "$h")" ] || hub_set "$h" path "$HOME/exchange/$h"; done
   [ -z "$CFG_DEFAULT" ] || is_hub "$CFG_DEFAULT" || die "$CONF: default = $CFG_DEFAULT, но такого хаба нет"
 }
 load_conf() { [ -f "$CONF" ] && { CONF_MODE=conf; parse_conf; }; return 0; }
-is_hub() { local h; for h in "${HUBS[@]}"; do [ "$h" = "$1" ] && return 0; done; return 1; }
+# Пустой массив под set -u в bash < 4.4 — «unbound variable», поэтому везде ${a[@]+"${a[@]}"}.
+hub_idx() { local i=0 h; for h in ${HUBS[@]+"${HUBS[@]}"}; do [ "$h" = "$1" ] && { echo "$i"; return 0; }; i=$((i+1)); done; return 1; }
+is_hub() { hub_idx "$1" >/dev/null; }
+hub_new() { local i=${#HUBS[@]}; HUBS[$i]="$1"; HUB_PATHS[$i]="${2:-}"; HUB_REMOTES[$i]="${3:-}"; HUB_LOGINS[$i]="${4:-}"; }
+hub_set() { local i; i=$(hub_idx "$1") || return 1
+  case "$2" in path) HUB_PATHS[$i]="$3";; remote) HUB_REMOTES[$i]="$3";; login) HUB_LOGINS[$i]="$3";; esac; }
+hub_path()   { local i; i=$(hub_idx "$1") || return 0; echo "${HUB_PATHS[$i]:-}"; }
+hub_remote() { local i; i=$(hub_idx "$1") || return 0; echo "${HUB_REMOTES[$i]:-}"; }
 require_hubs() { [ ${#HUBS[@]} -gt 0 ] || die "хабов нет: xchg hub add <имя> <remote> или xchg hub init <имя>"; }
-hub_login()  { local l="${HUB_LOGIN[$1]:-}"; echo "${l:-$USER}"; }
-hub_has_remote() { git -C "${HUB_PATH[$1]}" remote get-url origin >/dev/null 2>&1; }
-hub_contract() { grep -m1 -E '^contract: *[0-9]+' "${HUB_PATH[$1]}/README.md" 2>/dev/null | sed -E 's/^contract: *//' || true; }
+hub_login()  { local i l=""; if i=$(hub_idx "$1"); then l="${HUB_LOGINS[$i]:-}"; fi; echo "${l:-${USER:-$(id -un)}}"; }
+hub_has_remote() { git -C "$(hub_path "$1")" remote get-url origin >/dev/null 2>&1; }
+hub_contract() { grep -m1 -E '^contract: *[0-9]+' "$(hub_path "$1")/README.md" 2>/dev/null | sed -E 's/^contract: *//' || true; }
 check_contract() { local c; c=$(hub_contract "$1"); c="${c:-0}"
   [ "$c" = "$XCHG_CONTRACT" ] || die "хаб $1: контракт $c, клиент понимает $XCHG_CONTRACT (xchg version)"; }
 default_hub() {
   [ -n "$CFG_DEFAULT" ] && { echo "$CFG_DEFAULT"; return; }
   [ ${#HUBS[@]} -eq 1 ] && { echo "${HUBS[0]}"; return; }
-  die "несколько хабов (${HUBS[*]}): укажи префикс hub: или default = <hub> в $CONF"
+  die "несколько хабов (${HUBS[*]-}): укажи префикс hub: или default = <hub> в $CONF"
 }
 conf_write() { local tmp="$CONF.tmp.$$"; cat > "$tmp" && mv "$tmp" "$CONF"; }
 conf_set_global() {
@@ -118,7 +125,7 @@ ensure_conf() {
 
 # --- синхронизация ---------------------------------------------------------------------------
 hub_sync() {  # <hub>; stdout — уведомления для агента
-  local h="$1"; local d="${HUB_PATH[$h]}"
+  local h="$1"; local d="$(hub_path "$h")"
   [ -d "$d/.git" ] || { echo "хаб $h: нет клона в $d (xchg hub add $h <remote>)"; return 1; }
   # прошлый pull могли убить по таймауту посреди rebase — откатить
   [ -d "$d/.git/rebase-merge" ] || [ -d "$d/.git/rebase-apply" ] && git -C "$d" rebase --abort >/dev/null 2>&1 || true
@@ -135,7 +142,7 @@ hub_sync() {  # <hub>; stdout — уведомления для агента
     fi
   else
     local u="$d/.git/xchg-unavail" last=0; [ -f "$u" ] && last=$(cat "$u")
-    if [ "$BRIEF" = 0 ] || [ $((now - last)) -ge 3600 ]; then echo "хаб $h недоступен (${HUB_REMOTE[$h]:-origin})"; echo "$now" > "$u"; fi
+    if [ "$BRIEF" = 0 ] || [ $((now - last)) -ge 3600 ]; then echo "хаб $h недоступен ($(hub_remote "$h" | sed 's/^$/origin/'))"; echo "$now" > "$u"; fi
   fi
   return 0
 }
@@ -165,7 +172,7 @@ self_update() {  # git pull в репозитории клиента; молчи
   [ "$before" = "$after" ] || { echo "xchg: клиент обновлён:"; git -C "$XCHG_ROOT" log --oneline "$before..$after" | sed 's/^/  /'; }
 }
 hub_push() {  # <hub> <сообщение коммита>
-  local h="$1"; local d="${HUB_PATH[$h]}"; git -C "$d" commit -q -m "$2"
+  local h="$1"; local d="$(hub_path "$h")"; git -C "$d" commit -q -m "$2"
   hub_has_remote "$h" || return 0
   local i; for i in 1 2 3; do git -C "$d" pull -q --rebase --autostash >/dev/null 2>&1 && git -C "$d" push -q 2>/dev/null && return 0
     git -C "$d" rebase --abort >/dev/null 2>&1 || true; sleep 1; done
@@ -174,7 +181,7 @@ hub_push() {  # <hub> <сообщение коммита>
 
 # --- люди и проекты хаба ---------------------------------------------------------------------
 resolve_user() {  # <hub> <запрос> -> login (people/ или contacts.md, casefold, кириллица через python3)
-  local d="${HUB_PATH[$1]}" q="$2" hit=""
+  local d="$(hub_path "$1")" q="$2" hit=""
   [ -d "$d/people/$q" ] && { echo "$q"; return 0; }
   [ -f "$d/contacts.md" ] || return 1
   if have python3; then
@@ -198,15 +205,15 @@ PYR
   fi
   [ -n "$hit" ] && { echo "$hit"; return 0; }; return 1
 }
-has_project() { [ -d "${HUB_PATH[$1]}/projects/$2" ]; }
+has_project() { [ -d "$(hub_path "$1")/projects/$2" ]; }
 user_projects() {  # <hub> <user> -> проекты, где у человека есть агент
-  local d="${HUB_PATH[$1]}" p
+  local d="$(hub_path "$1")" p
   for p in "$d"/projects/*/"$2"; do [ -d "$p" ] || continue; p=${p%/$2}; basename "$p"; done; return 0
 }
 # Регистрация: человек попадает в книгу контактов при подключении к хабу, агент — при заведении
 # проекта. Паспорта содержат только медленные факты (имя, контакт, где код, точка входа в доки).
 register_me() {  # <hub>: строка в contacts.md и каталог people/<me>
-  local h="$1"; local d="${HUB_PATH[$h]}" me c row name contact changed=0
+  local h="$1"; local d="$(hub_path "$h")" me c row name contact changed=0
   me=$(hub_login "$h"); c="$d/contacts.md"
   [ -d "$d/people/$me" ] || { mkdir -p "$d/people/$me"; touch "$d/people/$me/.gitkeep"; changed=1; }
   [ -f "$c" ] || { changed=1; { echo "# Контакты"; echo; echo "| login | имя | алиасы | контакт |"; echo "|---|---|---|---|"; } > "$c"; }
@@ -221,7 +228,7 @@ register_me() {  # <hub>: строка в contacts.md и каталог people/<
   hub_push "$h" "[xchg] $me в хабе" || true; echo "ты записан в книгу контактов хаба $h (поправить: xchg contact --name «…» --aliases «…»)"
 }
 agent_passport() {  # <hub> <project>: паспорт агента = человек × проект
-  local h="$1" p="$2"; local d="${HUB_PATH[$h]}" me f repo docs
+  local h="$1" p="$2"; local d="$(hub_path "$h")" me f repo docs
   me=$(hub_login "$h"); f="$d/projects/$p/$me/README.md"
   [ -f "$f" ] && return 0
   repo=$(git remote get-url origin 2>/dev/null || true)
@@ -257,19 +264,19 @@ parse_addr() {  # <[hub:]часть[:часть]> -> A_HUB A_REL A_LABEL
   local hits=() h l
   if [ -z "$hub" ]; then                       # хаб не указан — ищем по содержимому
     if [ -n "$u" ]; then
-      for h in "${HUBS[@]}"; do l=$(resolve_user "$h" "$u") || continue
+      for h in ${HUBS[@]+"${HUBS[@]}"}; do l=$(resolve_user "$h" "$u") || continue
         [ -n "$p" ] && { has_project "$h" "$p" || continue; }; hits+=("$h"); done
     elif [ -n "$p" ]; then
-      for h in "${HUBS[@]}"; do has_project "$h" "$p" && hits+=("$h"); done
+      for h in ${HUBS[@]+"${HUBS[@]}"}; do has_project "$h" "$p" && hits+=("$h"); done
     else hits=("$(default_hub)"); fi
     case ${#hits[@]} in
       1) hub="${hits[0]}";;
-      0) [ -n "$u" ] && die "адресат «$u» не найден ни в одном хабе (xchg who)" || die "нет проекта «$p» ни в одном хабе (завести: xchg projects add $p)";;
-      *) die "«$spec» есть в хабах: ${hits[*]} — уточни, например ${hits[0]}:$spec";;
+      0) [ -n "$u" ] && die "адресат «${u}» не найден ни в одном хабе (xchg who)" || die "нет проекта «${p}» ни в одном хабе (завести: xchg projects add $p)";;
+      *) die "«${spec}» есть в хабах: ${hits[*]} — уточни, например ${hits[0]}:$spec";;
     esac
   fi
-  if [ -n "$u" ]; then u=$(resolve_user "$hub" "$u") || die "адресат «$u» не найден в хабе $hub (xchg who --hub $hub)"; fi
-  if [ -n "$p" ]; then has_project "$hub" "$p" || die "нет проекта «$p» в хабе $hub (завести: xchg projects add $p --hub $hub)"; fi
+  if [ -n "$u" ]; then u=$(resolve_user "$hub" "$u") || die "адресат «${u}» не найден в хабе $hub (xchg who --hub $hub)"; fi
+  if [ -n "$p" ]; then has_project "$hub" "$p" || die "нет проекта «${p}» в хабе $hub (завести: xchg projects add $p --hub $hub)"; fi
   A_HUB="$hub"
   if   [ -n "$p" ] && [ -n "$u" ]; then A_REL="projects/$p/$u"; A_LABEL="@$p:$u"
   elif [ -n "$p" ];                then A_REL="projects/$p";    A_LABEL="@$p"
@@ -292,13 +299,18 @@ addr_label() {  # <hub> <относительный путь> -> коротка�
 # --- идентичность агента ----------------------------------------------------------------------
 # Агент = человек × проект. Проект текущей сессии — имя основного репозитория
 # (для worktree — главного), либо git config xchg.project, если клон назван иначе.
+repo_root() {  # корень основного репозитория (для worktree — главного); код 1 вне git
+  local common; common=$(git rev-parse --git-common-dir 2>/dev/null) || return 1
+  common=$(cd "$common" 2>/dev/null && pwd -P) || return 1
+  dirname "$common"
+}
 cur_project() {
-  local common root o
-  common=$(git rev-parse --git-common-dir 2>/dev/null) || return 0
-  common=$(cd "$common" 2>/dev/null && pwd -P) || return 0
-  root=$(dirname "$common")
+  local root o; root=$(repo_root) || return 0
   o=$(git -C "$root" config --get xchg.project 2>/dev/null || true)
   echo "${o:-$(basename "$root")}"
+}
+project_norm() {  # имя репозитория -> допустимое имя проекта: TRENDS-frontend -> trends-frontend
+  printf '%s' "$1" | LC_ALL=C tr 'A-Z' 'a-z' | LC_ALL=C sed 's/[^a-z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//'
 }
 sender_id() {  # <hub> -> подпись отправителя: user/project или просто user вне репозитория
   local me p; me=$(hub_login "$1"); p=$(cur_project)
@@ -311,7 +323,7 @@ my_addrs() {  # <hub> -> адреса этой сессии: хаб, я, мой 
 }
 other_addrs() {  # <hub> -> мои адреса в других проектах (в этой сессии не показываются)
   local h="$1" me p cur d; me=$(hub_login "$h"); cur=$(cur_project)
-  for d in "${HUB_PATH[$h]}"/projects/*/; do [ -d "$d" ] || continue; p=$(basename "$d")
+  for d in "$(hub_path "$h")"/projects/*/; do [ -d "$d" ] || continue; p=$(basename "$d")
     [ "$p" = "$cur" ] && continue
     echo "projects/$p"; [ -d "$d$me" ] && echo "projects/$p/$me"; done
   return 0
@@ -319,9 +331,11 @@ other_addrs() {  # <hub> -> мои адреса в других проектах
 cmd_agent() {
   require_hubs; local h p me n=0; p=$(cur_project)
   [ -n "$p" ] || die "не в git-репозитории: агент — это человек × проект, а проект здесь неизвестен"
-  for h in "${HUBS[@]}"; do me=$(hub_login "$h"); has_project "$h" "$p" || continue
+  for h in ${HUBS[@]+"${HUBS[@]}"}; do me=$(hub_login "$h"); has_project "$h" "$p" || continue
     echo "$h:@$p:$me"; n=$((n+1)); done
-  [ "$n" -gt 0 ] || echo "репозиторий «$p» не заведён проектом ни в одном хабе (xchg projects add $p)"
+  [ "$n" -gt 0 ] && return 0
+  if [[ "$p" =~ $PROJ_RE ]]; then echo "репозиторий «${p}» не заведён проектом ни в одном хабе (xchg projects add ${p})"
+  else echo "имя репозитория «${p}» не годится для проекта (нужно [a-z0-9._-]): xchg projects add $(project_norm "$p") — имя запомнится для этого репозитория"; fi
 }
 
 # --- сообщения --------------------------------------------------------------------------------
@@ -334,10 +348,10 @@ msg_files() {  # <каталог> -> сообщения адреса (без к�
 kind_of() { local k; k=$(meta kind "$1"); echo "${k:-note}"; }
 # Курсор чтения — у каждого агента свой: заметку в общий адрес (all, people/<me>) должен
 # прочитать каждый мой агент и разнести к себе, а не «кто первый, тот и закрыл для всех».
-cursor_file() { local key="${2//\//_}" p; p=$(cur_project); echo "${HUB_PATH[$1]}/.git/xchg-read/${p:-shell}--$key"; }
+cursor_file() { local key="${2//\//_}" p; p=$(cur_project); echo "$(hub_path "$1")/.git/xchg-read/${p:-shell}--$key"; }
 is_read() { local cf; cf=$(cursor_file "$1" "$2"); [ -f "$cf" ] && grep -qxF "$3" "$cf"; }
 mark_read() {  # <hub> <адрес> [файл|все непрочитанные]
-  local h="$1" rel="$2" cf d b; cf=$(cursor_file "$h" "$rel"); d="${HUB_PATH[$h]}/$rel"
+  local h="$1" rel="$2" cf d b; cf=$(cursor_file "$h" "$rel"); d="$(hub_path "$h")/$rel"
   mkdir -p "$(dirname "$cf")"; touch "$cf"
   { cat "$cf"; if [ -n "${3:-}" ]; then basename "$3"; else msg_files "$d" | sed 's|.*/||'; fi; } | sort -u |
     while read -r b; do [ -n "$b" ] && [ -e "$d/$b" ] && echo "$b"; done > "$cf.tmp" || true
@@ -352,18 +366,18 @@ list_addr() {  # <hub> <адрес> -> строки для inbox
     elif is_read "$h" "$rel" "$b"; then continue; fi
     printf '%-8s %-12s %-7s %-44s %-12s %s\n' "$h" "$(addr_label "$h" "$rel")" \
       "$([ "$k" = task ] && echo задача || echo заметка)" "$rel/$b" "$(meta from "$f")" "$(title "$f")"
-  done < <(msg_files "${HUB_PATH[$h]}/$rel")
+  done < <(msg_files "$(hub_path "$h")/$rel")
   return 0
 }
 count_addr() {  # <hub> <адрес> -> сколько там для меня нового
   local h="$1" rel="$2" f b n=0
   while IFS= read -r f; do [ -n "$f" ] || continue; b=$(basename "$f")
     [ "$(kind_of "$f")" = task ] || is_read "$h" "$rel" "$b" || { n=$((n+1)); continue; }
-    [ "$(kind_of "$f")" = task ] && n=$((n+1)); done < <(msg_files "${HUB_PATH[$h]}/$rel")
+    [ "$(kind_of "$f")" = task ] && n=$((n+1)); done < <(msg_files "$(hub_path "$h")/$rel")
   echo "$n"
 }
 write_msg() {  # <hub> <адрес> <kind> <from> <to> <slug> <re> <ref> <forwarded_from> <тело> -> путь
-  local d="${HUB_PATH[$1]}" f="$2/$(date -u +%Y%m%d-%H%M%S)_${4//\//-}_$6.md"
+  local d="$(hub_path "$1")" f="$2/$(date -u +%Y%m%d-%H%M%S)_${4//\//-}_$6.md"
   mkdir -p "$d/$2"
   { printf -- '---\nfrom: %s\nto: %s\nkind: %s\n' "$4" "$5" "$3"
     printf 'date: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -379,23 +393,23 @@ warn_secrets() { grep -qE 'AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|gh[ous]_[A-Za-z
 L_HUB="" L_REL=""   # найденный файл: хаб и путь внутри хаба
 locate() {
   local a="$1" h found=()
-  case "$a" in *:*) h="${a%%:*}"; if is_hub "$h"; then L_HUB="$h"; L_REL="${a#*:}"; L_REL="${L_REL#${HUB_PATH[$h]}/}"; return 0; fi;; esac
+  case "$a" in *:*) h="${a%%:*}"; if is_hub "$h"; then L_HUB="$h"; L_REL="${a#*:}"; L_REL="${L_REL#$(hub_path "$h")/}"; return 0; fi;; esac
   if [ "${a#/}" != "$a" ]; then
-    for h in "${HUBS[@]}"; do case "$a" in "${HUB_PATH[$h]}"/*) L_HUB="$h"; L_REL="${a#${HUB_PATH[$h]}/}"; return 0;; esac; done
+    for h in ${HUBS[@]+"${HUBS[@]}"}; do case "$a" in "$(hub_path "$h")"/*) L_HUB="$h"; L_REL="${a#$(hub_path "$h")/}"; return 0;; esac; done
     die "файл $a не внутри ни одного хаба (xchg hubs)"
   fi
-  for h in "${HUBS[@]}"; do [ -e "${HUB_PATH[$h]}/$a" ] && found+=("$h"); done
+  for h in ${HUBS[@]+"${HUBS[@]}"}; do [ -e "$(hub_path "$h")/$a" ] && found+=("$h"); done
   case ${#found[@]} in
     1) L_HUB="${found[0]}"; L_REL="$a";;
     0) die "файл $a не найден ни в одном хабе (xchg inbox)";;
     *) die "файл $a есть в хабах: ${found[*]} — уточни: ${found[0]}:$a";;
   esac
 }
-hub_filter() { [ -z "${OPT_HUB:-}" ] && { echo "${HUBS[@]}"; return; }; is_hub "$OPT_HUB" || die "нет хаба «$OPT_HUB» (xchg hubs)"; echo "$OPT_HUB"; }
+hub_filter() { [ -z "${OPT_HUB:-}" ] && { echo ${HUBS[@]+"${HUBS[@]}"}; return; }; is_hub "$OPT_HUB" || die "нет хаба «${OPT_HUB}» (xchg hubs)"; echo "$OPT_HUB"; }
 
 # --- команды: чтение --------------------------------------------------------------------------
 unsent_warn() { local h n; for h in "$@"; do hub_has_remote "$h" || continue
-    n=$(git -C "${HUB_PATH[$h]}" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
+    n=$(git -C "$(hub_path "$h")" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
     [ "$n" -gt 0 ] && echo "хаб $h: $n не отправлено на origin (xchg sync)"; done; return 0; }
 others_note() {  # сколько нового лежит в моих других проектах
   [ "$SHOW_ALL" = 1 ] && return 0
@@ -428,12 +442,12 @@ cmd_inbox() {
   [ -n "$others" ] && echo "$others"; [ -n "$unsent" ] && echo "$unsent"; return 0
 }
 cmd_read() { require_hubs; [ -n "${1:-}" ] || udie "read <файл>"; locate "$1"; sync_hubs "$L_HUB"
-  local f="${HUB_PATH[$L_HUB]}/$L_REL"; [ -f "$f" ] || die "нет файла $L_HUB:$L_REL"; cat "$f"; }
+  local f="$(hub_path "$L_HUB")/$L_REL"; [ -f "$f" ] || die "нет файла $L_HUB:$L_REL"; cat "$f"; }
 cmd_seen() {  # пометить заметки прочитанными: адрес целиком, один файл или все мои адреса
   require_hubs; local target="${1:-}" h rel n=0
   if [ -z "$target" ]; then
     for h in $(hub_filter); do while IFS= read -r rel; do
-      n=$((n + $(msg_files "${HUB_PATH[$h]}/$rel" | grep -c . || true))); mark_read "$h" "$rel"; done < <(my_addrs "$h"); done
+      n=$((n + $(msg_files "$(hub_path "$h")/$rel" | grep -c . || true))); mark_read "$h" "$rel"; done < <(my_addrs "$h"); done
     echo "прочитано: все мои адреса"; return 0
   fi
   if [ -e "$target" ] || [[ "$target" == *.md ]]; then locate "$target"; mark_read "$L_HUB" "$(dirname "$L_REL")" "$L_REL"; echo "прочитано: $L_HUB:$L_REL"; return 0; fi
@@ -443,34 +457,34 @@ cmd_sent() {  # мои сообщения, которые ещё лежат от
   require_hubs; local hubs h me f from n=0; hubs=$(hub_filter); sync_hubs $hubs
   for h in $hubs; do me=$(hub_login "$h")
     while IFS= read -r f; do from=$(meta from "$f"); case "$from" in "$me"|"$me"/*) ;; *) continue;; esac
-      printf '%-8s %-44s %-12s %s\n' "$h" "${f#${HUB_PATH[$h]}/}" "$(meta to "$f")" "$(title "$f")"; n=$((n+1))
-    done < <(find "${HUB_PATH[$h]}" -name '*.md' -not -name README.md -not -path '*/.git/*' -not -path '*/done/*' -type f 2>/dev/null | sort)
+      printf '%-8s %-44s %-12s %s\n' "$h" "${f#$(hub_path "$h")/}" "$(meta to "$f")" "$(title "$f")"; n=$((n+1))
+    done < <(find "$(hub_path "$h")" -name '*.md' -not -name README.md -not -path '*/.git/*' -not -path '*/done/*' -type f 2>/dev/null | sort)
   done
   [ "$n" -gt 0 ] || echo "всё, что я отправлял, закрыто или прочитано"
 }
 hist_find() {  # <hub> <имя файла> -> "коммит<TAB>путь" коммита, который его добавил
-  git -C "${HUB_PATH[$1]}" log --diff-filter=A --format='c %H' --name-only -- "*/$2" 2>/dev/null |
+  git -C "$(hub_path "$1")" log --diff-filter=A --format='c %H' --name-only -- "*/$2" 2>/dev/null |
     awk '/^c /{c=$2; next} NF && $0 ~ /\.md$/ {print c "\t" $0; exit}'
 }
-msg_find() { find "${HUB_PATH[$1]}" -name "$2" -not -path '*/.git/*' -type f 2>/dev/null | head -1; }
+msg_find() { find "$(hub_path "$1")" -name "$2" -not -path '*/.git/*' -type f 2>/dev/null | head -1; }
 msg_field() {  # значение поля из рабочего дерева или из истории
   local f cp; f=$(msg_find "$1" "$2")
   [ -n "$f" ] && { meta "$3" "$f"; return 0; }
   cp=$(hist_find "$1" "$2"); [ -n "$cp" ] || return 0
-  git -C "${HUB_PATH[$1]}" show "${cp%%	*}:${cp#*	}" 2>/dev/null | sed -n '/^---$/,/^---$/{s/^'"$3"': *//p;}' | head -1
+  git -C "$(hub_path "$1")" show "${cp%%	*}:${cp#*	}" 2>/dev/null | sed -n '/^---$/,/^---$/{s/^'"$3"': *//p;}' | head -1
 }
 msg_title() {
   local f cp; f=$(msg_find "$1" "$2")
   [ -n "$f" ] && { title "$f"; return 0; }
   cp=$(hist_find "$1" "$2"); [ -n "$cp" ] || return 0
-  git -C "${HUB_PATH[$1]}" show "${cp%%	*}:${cp#*	}" 2>/dev/null | grep -m1 '^# ' | sed 's/^# //' || true
+  git -C "$(hub_path "$1")" show "${cp%%	*}:${cp#*	}" 2>/dev/null | grep -m1 '^# ' | sed 's/^# //' || true
 }
 cmd_thread() {
   require_hubs; [ -n "${1:-}" ] || udie "thread <файл>"
-  sync_hubs "${HUBS[@]}"; locate "$1"
+  sync_hubs ${HUBS[@]+"${HUBS[@]}"}; locate "$1"
   local h="$L_HUB" b; b=$(basename "$L_REL")
   local chain=() cur="$b" guard=0 re f p
-  while [ -n "$cur" ] && [ "$guard" -lt 50 ]; do chain=("$cur" "${chain[@]}"); guard=$((guard+1))
+  while [ -n "$cur" ] && [ "$guard" -lt 50 ]; do chain=("$cur" ${chain[@]+"${chain[@]}"}); guard=$((guard+1))
     re=$(msg_field "$h" "$cur" re); [ -n "$re" ] || break; cur="$re"; done
   for f in "${chain[@]}"; do
     p=$(msg_find "$h" "$f")
@@ -480,7 +494,7 @@ cmd_thread() {
   done
   local r; while IFS= read -r r; do [ -n "$r" ] || continue
     printf '%-20s %-12s %-9s %s\n' "$(meta date "$r" | cut -c1-19)" "$(meta from "$r")" "ответ" "$(title "$r")"
-  done < <(grep -rl "^re: $b\$" "${HUB_PATH[$h]}" --include='*.md' 2>/dev/null | sort)
+  done < <(grep -rl "^re: $b\$" "$(hub_path "$h")" --include='*.md' 2>/dev/null | sort)
 }
 
 # --- команды: письмо --------------------------------------------------------------------------
@@ -490,7 +504,7 @@ send_common() {  # <kind> <адрес> <slug> [флаги] < тело
   [[ "$slug" =~ $NAME_RE ]] || udie "slug из [A-Za-z0-9._-]"
   [ -t 0 ] && udie "тело сообщения ожидается на stdin"
   local body; body=$(cat)
-  sync_hubs "${HUBS[@]}"; parse_addr "$to"; check_contract "$A_HUB"
+  sync_hubs ${HUBS[@]+"${HUBS[@]}"}; parse_addr "$to"; check_contract "$A_HUB"
   local from f; from=$(sender_id "$A_HUB")
   f=$(write_msg "$A_HUB" "$A_REL" "$kind" "$from" "$A_LABEL" "$slug" "$re" "$ref" "" "$body")
   warn_secrets "$body"
@@ -507,8 +521,8 @@ cmd_reply() {
   while [ $# -gt 0 ]; do case "$1" in --task) kind=task; shift;; --note) kind=note; shift;; *) udie "reply: неизвестный флаг $1";; esac; done
   [ -t 0 ] && udie "reply: тело ответа ожидается на stdin"
   local body; body=$(cat)
-  sync_hubs "${HUBS[@]}"; locate "$src"
-  local f="${HUB_PATH[$L_HUB]}/$L_REL"; [ -f "$f" ] || die "нет файла $L_HUB:$L_REL"
+  sync_hubs ${HUBS[@]+"${HUBS[@]}"}; locate "$src"
+  local f="$(hub_path "$L_HUB")/$L_REL"; [ -f "$f" ] || die "нет файла $L_HUB:$L_REL"
   local from to; from=$(meta from "$f"); [ -n "$from" ] || die "в $L_REL нет поля from — некому отвечать"
   case "$from" in */*) to="$L_HUB:@${from#*/}:${from%%/*}";; *) to="$L_HUB:$from";; esac
   parse_addr "$to"; check_contract "$A_HUB"
@@ -519,8 +533,8 @@ cmd_reply() {
 }
 cmd_claim() {  # взять задачу себе: файл переезжает в адрес моего агента
   require_hubs; [ -n "${1:-}" ] || udie "claim <файл>"
-  sync_hubs "${HUBS[@]}"; locate "$1"
-  local h="$L_HUB"; local d="${HUB_PATH[$h]}" rel="$L_REL" b me p dst
+  sync_hubs ${HUBS[@]+"${HUBS[@]}"}; locate "$1"
+  local h="$L_HUB"; local d="$(hub_path "$h")" rel="$L_REL" b me p dst
   b=$(basename "$rel"); me=$(hub_login "$h")
   [ -f "$d/$rel" ] || { local w; w=$(claim_owner "$h" "$b"); die "задачу уже взял ${w:-кто-то}"; }
   [ "$(kind_of "$d/$rel")" = task ] || die "заметки не берут — их читают: xchg seen $h:$(addr_label "$h" "$(dirname "$rel")")"
@@ -539,7 +553,7 @@ cmd_claim() {  # взять задачу себе: файл переезжает
   [ -n "$w" ] && die "задачу уже взял $w" || die "claim не удался, попробуй ещё раз (xchg status)"
 }
 claim_owner() {  # <hub> <имя файла> -> у кого он теперь лежит
-  local d="${HUB_PATH[$1]}" f
+  local d="$(hub_path "$1")" f
   f=$(find "$d/projects" "$d/people" -name "$2" -not -path '*/.git/*' -type f 2>/dev/null | head -1)
   [ -n "$f" ] || return 0
   f="${f#$d/}"; case "$f" in projects/*/*/*) echo "$(echo "$f" | cut -d/ -f3)";; people/*) echo "$(echo "$f" | cut -d/ -f2)";; esac
@@ -548,7 +562,7 @@ claim_owner() {  # <hub> <имя файла> -> у кого он теперь л
 cmd_done() {  # закрыть задачу: файл переезжает в done/ своего адреса
   require_hubs; [ -n "${1:-}" ] || udie "done <файл>"
   locate "$1"; sync_hubs "$L_HUB"
-  local h="$L_HUB"; local d="${HUB_PATH[$h]}" rel="$L_REL" dir
+  local h="$L_HUB"; local d="$(hub_path "$h")" rel="$L_REL" dir
   [ -f "$d/$rel" ] || die "файла $h:$rel уже нет (закрыт кем-то другим?)"
   [ "$(kind_of "$d/$rel")" = task ] || die "заметки не закрывают — их читают: xchg seen $h:$(addr_label "$h" "$(dirname "$rel")")"
   case "$rel" in */done/*) die "задача уже закрыта";; esac
@@ -560,8 +574,8 @@ cmd_forward() {
   require_hubs; [ $# -ge 2 ] || udie "forward <файл> <адрес> [--note «…»]"
   local src="$1" to="$2" note=""; shift 2
   while [ $# -gt 0 ]; do case "$1" in --note) note="$2"; shift 2;; *) udie "forward: неизвестный флаг $1";; esac; done
-  sync_hubs "${HUBS[@]}"; locate "$src"
-  local sd="${HUB_PATH[$L_HUB]}/$L_REL"; [ -f "$sd" ] || die "нет файла $L_HUB:$L_REL"
+  sync_hubs ${HUBS[@]+"${HUBS[@]}"}; locate "$src"
+  local sd="$(hub_path "$L_HUB")/$L_REL"; [ -f "$sd" ] || die "нет файла $L_HUB:$L_REL"
   parse_addr "$to"; check_contract "$A_HUB"
   local from body slug kind; from=$(sender_id "$A_HUB"); kind=$(kind_of "$sd")
   slug=$(basename "$L_REL" .md); slug="${slug#*_}"; slug="${slug#*_}"; slug="fwd-${slug:-msg}"
@@ -574,7 +588,7 @@ cmd_forward() {
 cmd_who() {
   require_hubs; local q=""; while [ $# -gt 0 ]; do case "$1" in --hub) OPT_HUB="$2"; shift 2;; *) q="$1"; shift;; esac; done
   local hubs h; hubs=$(hub_filter); sync_hubs $hubs; local any=0
-  for h in $hubs; do local c="${HUB_PATH[$h]}/contacts.md"; [ -f "$c" ] || continue
+  for h in $hubs; do local c="$(hub_path "$h")/contacts.md"; [ -f "$c" ] || continue
     if [ -z "$q" ]; then echo "== $h"; who_table "$h" "$c"; echo; any=1; continue; fi
     local hits; if have python3; then hits=$(python3 -c 'import sys
 q=sys.argv[1].casefold()
@@ -601,8 +615,8 @@ cmd_contact() {
     --name) name="$2"; set=1; shift 2;; --aliases) aliases="$2"; set=1; shift 2;;
     --contact) contact="$2"; set=1; shift 2;;
     --hub) OPT_HUB="$2"; shift 2;; *) udie "contact [--name N] [--aliases «a, b»] [--contact C] [--hub H]";; esac; done
-  local h; h="${OPT_HUB:-$(default_hub)}"; is_hub "$h" || die "нет хаба «$h»"
-  sync_hubs "$h"; local d="${HUB_PATH[$h]}"; local c="$d/contacts.md" me; me=$(hub_login "$h")
+  local h; h="${OPT_HUB:-$(default_hub)}"; is_hub "$h" || die "нет хаба «${h}»"
+  sync_hubs "$h"; local d="$(hub_path "$h")"; local c="$d/contacts.md" me; me=$(hub_login "$h")
   [ -f "$c" ] || die "в хабе $h нет contacts.md"
   local cur; cur=$(awk -F'|' -v me="$me" '/^\|/ { l=$2; gsub(/^ +| +$/,"",l); if (l==me) { print; exit } }' "$c")
   if [ "$set" = 0 ]; then [ -n "$cur" ] && echo "$cur" || echo "тебя ($me) нет в contacts.md хаба $h: xchg contact --name «…»"; return 0; fi
@@ -626,19 +640,28 @@ cmd_projects() {
   require_hubs
   local sub="${1:-}"; case "$sub" in add) shift; cmd_project_add "$@"; return $?;; --hub) OPT_HUB="$2";; esac
   local hubs h p cur; hubs=$(hub_filter); sync_hubs $hubs; cur=$(cur_project)
-  for h in $hubs; do for p in "${HUB_PATH[$h]}"/projects/*/; do [ -d "$p" ] || continue; p=$(basename "$p")
-    printf '%-8s %-16s %-5s %s\n' "$h" "$p" "$([ "$p" = "$cur" ] && echo здесь || echo '')" "$(project_card "${HUB_PATH[$h]}/projects/$p/README.md" "$p")"
+  for h in $hubs; do for p in "$(hub_path "$h")"/projects/*/; do [ -d "$p" ] || continue; p=$(basename "$p")
+    printf '%-8s %-16s %-5s %s\n' "$h" "$p" "$([ "$p" = "$cur" ] && echo здесь || echo '')" "$(project_card "$(hub_path "$h")/projects/$p/README.md" "$p")"
   done; done; return 0
 }
 cmd_project_add() {
   require_hubs; local name="${1:-}" repo="" owner=""
   case "$name" in --*|"") name="";; *) shift;; esac   # имя необязательно: без него берём текущий репозиторий
   while [ $# -gt 0 ]; do case "$1" in --repo) repo="$2"; shift 2;; --owner) owner="$2"; shift 2;; --hub) OPT_HUB="$2"; shift 2;; *) udie "projects add <имя> [--repo <где код>] [--owner login] [--hub H]";; esac; done
-  [ -n "$name" ] || name=$(cur_project)
-  [[ "$name" =~ $PROJ_RE ]] || udie "projects add: имя проекта из [a-z0-9._-]"
-  local h; h="${OPT_HUB:-$(default_hub)}"; is_hub "$h" || die "нет хаба «$h»"
+  local from_repo=0 root; [ -n "$name" ] || { name=$(cur_project); from_repo=1; }
+  [ -n "$name" ] || udie "projects add: не в git-репозитории — укажи имя проекта"
+  if ! [[ "$name" =~ $PROJ_RE ]]; then
+    [ "$from_repo" = 1 ] && udie "имя репозитория «${name}» не годится для проекта (нужно [a-z0-9._-]). Заведи так: xchg projects add $(project_norm "$name") — имя запомнится для этого репозитория (git config xchg.project)"
+    udie "projects add: имя проекта из [a-z0-9._-], например: xchg projects add $(project_norm "$name")"
+  fi
+  # репозиторий с неподходящим именем становится этим проектом: иначе агент в нём останется неадресуемым
+  if [ "$from_repo" = 0 ] && root=$(repo_root) && ! git -C "$root" config --get xchg.project >/dev/null 2>&1 \
+     && ! [[ "$(basename "$root")" =~ $PROJ_RE ]]; then
+    git -C "$root" config xchg.project "$name"; echo "репозиторий $(basename "$root") теперь проект «${name}» (git config xchg.project)"
+  fi
+  local h; h="${OPT_HUB:-$(default_hub)}"; is_hub "$h" || die "нет хаба «${h}»"
   sync_hubs "$h"; check_contract "$h"
-  local d="${HUB_PATH[$h]}" pd="projects/$name"
+  local d="$(hub_path "$h")" pd="projects/$name"
   [ -n "$repo" ] || repo=$(git remote get-url origin 2>/dev/null || true)
   if [ -d "$d/$pd" ]; then echo "проект $name в хабе $h уже есть"
   else
@@ -653,11 +676,11 @@ cmd_project_add() {
   register_me "$h"; agent_passport "$h" "$name"
 }
 cmd_hubs() {
-  require_hubs; local h c
+  require_hubs; local h c r
   printf '%-8s %-8s %-30s %-9s %s\n' хаб логин путь контракт remote
-  for h in "${HUBS[@]}"; do c=$(hub_contract "$h")
-    printf '%-8s %-8s %-30s %-9s %s\n' "$h$([ "$h" = "$CFG_DEFAULT" ] && echo '*')" "$(hub_login "$h")" "${HUB_PATH[$h]}" \
-      "${c:-нет}" "${HUB_REMOTE[$h]:-$(git -C "${HUB_PATH[$h]}" remote get-url origin 2>/dev/null || echo '(локальный)')}"; done
+  for h in ${HUBS[@]+"${HUBS[@]}"}; do c=$(hub_contract "$h")
+    r=$(hub_remote "$h"); [ -n "$r" ] || r=$(git -C "$(hub_path "$h")" remote get-url origin 2>/dev/null || echo '(локальный)')
+    printf '%-8s %-8s %-30s %-9s %s\n' "$h$([ "$h" = "$CFG_DEFAULT" ] && echo '*')" "$(hub_login "$h")" "$(hub_path "$h")" "${c:-нет}" "$r"; done
 }
 init_hub_repo() {  # <путь> <логин>
   local p="$1" login="$2"; mkdir -p "$p"; git -C "$p" init -q
@@ -678,14 +701,14 @@ cmd_hub() {
       while [ $# -gt 0 ]; do case "$1" in --path) path=$(expand_tilde "$2"); shift 2;; --remote) remote="$2"; shift 2;;
         --login) login="$2"; shift 2;; *) udie "hub init <имя> [--remote URL] [--path P] [--login L]";; esac; done
       [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || udie "hub init: имя хаба из [A-Za-z0-9_-]"
-      ensure_conf >/dev/null; is_hub "$name" && die "хаб «$name» уже есть (xchg hubs)"
+      ensure_conf >/dev/null; is_hub "$name" && die "хаб «${name}» уже есть (xchg hubs)"
       [ -n "$path" ] || path="$HOME/exchange/$name"; [ -e "$path" ] && die "$path уже существует"
-      [ -n "$login" ] || login="$USER"
+      [ -n "$login" ] || login="${USER:-$(id -un)}"
       init_hub_repo "$path" "$login"
       if [ -n "$remote" ]; then git -C "$path" remote add origin "$remote"
         git -C "$path" push -q -u origin HEAD || die "хаб создан в $path, но push в $remote не удался (создай пустой bare-репозиторий и повтори: git -C $path push -u origin HEAD)"; fi
       conf_add_hub "$name" "$remote" "$path" "$login"
-      HUBS+=("$name"); HUB_PATH[$name]="$path"; HUB_LOGIN[$name]="$login"; HUB_REMOTE[$name]="$remote"
+      hub_new "$name" "$path" "$remote" "$login"
       [ -n "$CFG_DEFAULT" ] || conf_set_global default "$name"
       register_me "$name"
       echo "хаб $name создан: $path${remote:+ → $remote}. Позови остальных: xchg hub add $name ${remote:-<url>}";;
@@ -693,27 +716,27 @@ cmd_hub() {
       local name="${1:-}" remote="${2:-}" login="" path=""; shift 2 2>/dev/null || udie "hub add <имя> <remote> [--login L] [--path P]"
       while [ $# -gt 0 ]; do case "$1" in --login) login="$2"; shift 2;; --path) path=$(expand_tilde "$2"); shift 2;; *) udie "hub add: неизвестный флаг $1";; esac; done
       [[ "$name" =~ ^[A-Za-z0-9_-]+$ ]] || udie "hub add: имя хаба из [A-Za-z0-9_-]"
-      ensure_conf >/dev/null; is_hub "$name" && die "хаб «$name» уже есть (xchg hubs)"
+      ensure_conf >/dev/null; is_hub "$name" && die "хаб «${name}» уже есть (xchg hubs)"
       [ -n "$path" ] || path="$HOME/exchange/$name"
       if [ -d "$path/.git" ]; then [ "$(git -C "$path" remote get-url origin 2>/dev/null)" = "$remote" ] || die "в $path уже другой клон"; echo "клон уже есть: $path"
       else git clone -q "$remote" "$path" || die "clone $remote не удался"; fi
       conf_add_hub "$name" "$remote" "$path" "$login"
-      HUBS+=("$name"); HUB_PATH[$name]="$path"; HUB_LOGIN[$name]="$login"; HUB_REMOTE[$name]="$remote"
+      hub_new "$name" "$path" "$remote" "$login"
       [ -n "$CFG_DEFAULT" ] || conf_set_global default "$name"
       echo "хаб $name подключён: $path ← $remote${login:+ (логин $login)}"
       register_me "$name";;
-    rm) local name="${1:-}"; [ -n "$name" ] || udie "hub rm <имя>"; require_hubs; is_hub "$name" || die "нет хаба «$name»"
+    rm) local name="${1:-}"; [ -n "$name" ] || udie "hub rm <имя>"; require_hubs; is_hub "$name" || die "нет хаба «${name}»"
       conf_rm_hub "$name"; [ "$CFG_DEFAULT" = "$name" ] && conf_set_global default ""
-      echo "хаб $name убран из реестра; клон ${HUB_PATH[$name]} оставлен на месте";;
-    remote) local name="${1:-}" url="${2:-}"; [ -n "$url" ] || udie "hub remote <имя> <url>"; require_hubs; is_hub "$name" || die "нет хаба «$name»"
-      local d="${HUB_PATH[$name]}"; if hub_has_remote "$name"; then git -C "$d" remote set-url origin "$url"; else git -C "$d" remote add origin "$url"; fi
+      echo "хаб $name убран из реестра; клон $(hub_path "$name") оставлен на месте";;
+    remote) local name="${1:-}" url="${2:-}"; [ -n "$url" ] || udie "hub remote <имя> <url>"; require_hubs; is_hub "$name" || die "нет хаба «${name}»"
+      local d="$(hub_path "$name")"; if hub_has_remote "$name"; then git -C "$d" remote set-url origin "$url"; else git -C "$d" remote add origin "$url"; fi
       git -C "$d" push -q -u origin HEAD || die "push в $url не удался (remote добавлен, повтори: git -C $d push -u origin HEAD)"
       conf_set_hub "$name" remote "$url"; echo "хаб $name теперь синхронизируется с $url";;
     *) udie "hub init <имя> [--remote URL] | hub add <имя> <remote> [--login L] | hub rm <имя> | hub remote <имя> <url>";;
   esac
 }
 cmd_log() { require_hubs; local n=20 hubs h; while [ $# -gt 0 ]; do case "$1" in --hub) OPT_HUB="$2"; shift 2;; *) n="$1"; shift;; esac; done
-  hubs=$(hub_filter); sync_hubs $hubs; for h in $hubs; do echo "== $h"; git -C "${HUB_PATH[$h]}" log --oneline -n "$n"; done; }
+  hubs=$(hub_filter); sync_hubs $hubs; for h in $hubs; do echo "== $h"; git -C "$(hub_path "$h")" log --oneline -n "$n"; done; }
 cmd_sync() { require_hubs; [ "${1:-}" = --hub ] && OPT_HUB="$2"; local hubs; hubs=$(hub_filter); sync_hubs $hubs; echo "synced: $hubs"; }
 
 # --- установка и состояние ---------------------------------------------------------------------
@@ -744,7 +767,7 @@ cmd_install() {
 cmd_status() {
   echo "xchg $(cmd_version)  ($XCHG_ROOT, контракт $XCHG_CONTRACT, $([ "$PLUGIN_MODE" = 1 ] && echo 'плагин Claude Code' || echo 'отдельная установка'))"
   echo "конфиг: $CONF ($CONF_MODE); default: ${CFG_DEFAULT:-—}; проект здесь: $(cur_project 2>/dev/null || echo '—')"
-  local h d st ahead; for h in "${HUBS[@]}"; do d="${HUB_PATH[$h]}"
+  local h d st ahead; for h in ${HUBS[@]+"${HUBS[@]}"}; do d="$(hub_path "$h")"
     if [ -d "$d/.git" ]; then st="sync $([ -f "$d/.git/xchg-last-sync" ] && rel_time "$(cat "$d/.git/xchg-last-sync")" || echo никогда)"
       ahead=$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0); [ "$ahead" != 0 ] && st="$st, не запушено: $ahead"
       [ -f "$d/.git/xchg-unavail" ] && st="$st, НЕДОСТУПЕН с $(rel_time "$(cat "$d/.git/xchg-unavail")") назад"
