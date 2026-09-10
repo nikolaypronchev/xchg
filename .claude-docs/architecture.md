@@ -25,7 +25,7 @@ tags: [memory/repo, architecture]
 ## Плагин Claude Code
 
 Репозиторий сам себе маркетплейс и плагин: `.claude-plugin/marketplace.json` (запись с `source: "./"`),
-`.claude-plugin/plugin.json`, `hooks/hooks.json` (хуки зовут `"${CLAUDE_PLUGIN_ROOT}/bin/xchg"`),
+`.claude-plugin/plugin.json` (без ключа `hooks`: стандартный `hooks/hooks.json` подхватывается сам), `hooks/hooks.json` (хуки зовут `"${CLAUDE_PLUGIN_ROOT}/bin/xchg"`),
 `commands/setup.md` (`/xchg:setup`). Каталог `bin/` плагина Claude Code сам добавляет в PATH,
 `skills/exchange` подхватывается автоматически.
 

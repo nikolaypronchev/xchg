@@ -39,9 +39,16 @@ for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.
 done
 assert_contains "$(cat "$ROOT/hooks/hooks.json")" '${CLAUDE_PLUGIN_ROOT}/bin/xchg'
 assert_contains "$(cat "$ROOT/.claude-plugin/marketplace.json")" '"source": "./"'
+assert_not_contains "$(cat "$ROOT/.claude-plugin/plugin.json")" '"hooks"'
+ok "манифест не ссылается на hooks/hooks.json: он подхватывается сам, ссылка — дубль"
 if command -v claude >/dev/null 2>&1; then
   run claude plugin validate "$ROOT"; assert_eq "$RC" 0 "claude plugin validate"
-else ok "claude CLI нет — валидацию манифестов пропускаем"; fi
+  # validate не ловит ошибки загрузки — проверяем настоящей установкой в отдельный HOME
+  PH="$SB/plugin-home"; mkdir -p "$PH"
+  run env HOME="$PH" claude plugin marketplace add "$ROOT"; assert_eq "$RC" 0 "маркетплейс добавляется"
+  run env HOME="$PH" claude plugin install xchg@xchg -y; assert_eq "$RC" 0 "плагин ставится"
+  run env HOME="$PH" claude plugin list; assert_contains "$OUT" "xchg@xchg"; assert_not_contains "$OUT" "failed to load"
+else ok "claude CLI нет — валидацию и установку плагина пропускаем"; fi
 
 t "совместимость с bash 3.2 (статически; живой прогон — tests/bash32.sh)"
 assert_eq "$(grep -c 'declare -A' "$X" || true)" 0 "нет ассоциативных массивов"
