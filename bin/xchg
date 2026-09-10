@@ -577,7 +577,7 @@ cmd_thread() {
   for f in "${chain[@]}"; do
     p=$(msg_find "$h" "$f")
     printf '%-20s %-12s %-9s %s\n' "$(msg_field "$h" "$f" date | cut -c1-19)" "$(msg_field "$h" "$f" from)" \
-      "$([ -n "$p" ] && { case "$p" in */done/*) echo закрыто;; *) echo открыто;; esac; } || echo 'нет файла')" "$(msg_title "$h" "$f")"
+      "$([ -n "$p" ] && { case "$p" in (*/done/*) echo закрыто;; (*) echo открыто;; esac; } || echo 'нет файла')" "$(msg_title "$h" "$f")"
     printf '%-20s %s\n' "" "$f"
   done
   local r; while IFS= read -r r; do [ -n "$r" ] || continue

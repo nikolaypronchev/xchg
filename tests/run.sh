@@ -144,8 +144,11 @@ run in_api "$X" reply "$P" ok <<< '# Сделал'; assert_eq "$RC" 0 "reply rc"
 assert_contains "$OUT" "отправлено: work:projects/api/bob/"; ok "ответ уходит агенту отправителя, а не человеку"
 R=$(ls -t "$H/exchange/work/projects/api/bob/"*ok.md | head -1)
 assert_contains "$(cat "$R")" "re: $(basename "$P")"
-run in_api "$X" thread "$R"; assert_contains "$OUT" "Личная просьба"; assert_contains "$OUT" "Сделал"; assert_contains "$OUT" "открыто"
-run in_api "$X" done "$P" ; run in_api "$X" thread "$R"; assert_contains "$OUT" "закрыто"; ok "закрытая задача читается из истории"
+# колонку статуса сверяем точно: сломанный вывод содержит оба слова внутри текста скрипта
+run in_api "$X" thread "$R"; assert_contains "$OUT" "Личная просьба"; assert_contains "$OUT" "Сделал"
+assert_not_contains "$OUT" "syntax error"; assert_eq "$(awk '/Личная просьба/ {print $3}' <<< "$OUT")" "открыто" "статус открытой задачи"
+run in_api "$X" done "$P" ; run in_api "$X" thread "$R"
+assert_not_contains "$OUT" "syntax error"; assert_eq "$(awk '/Личная просьба/ {print $3}' <<< "$OUT")" "закрыто" "закрытая задача читается из истории"
 run in_api "$X" sent; assert_contains "$OUT" "projects/api/bob/"; assert_contains "$OUT" "Сделал"
 
 t "wait: ожидание без человека"
