@@ -511,7 +511,7 @@ cmd_wait() {
   { [[ "$timeout" =~ ^[0-9]+$ ]] && [[ "$interval" =~ ^[1-9][0-9]*$ ]]; } || udie "wait: --timeout и --interval — целые секунды (--interval от 1)"
   require_hubs
   local hubs start line h rel new n pause left; hubs=$(hub_filter); start=$(now_epoch)
-  BRIEF=1; MAX_AGE=0; XCHG_NO_SELFUPDATE=1   # не обновлять клиент посреди ожидания: bash дочитывает скрипт по ходу исполнения
+  BRIEF=1; MAX_AGE=0; XCHG_NO_SELFUPDATE=1   # не тянуть репозиторий клиента на каждом витке ожидания
   while :; do
     sync_hubs $hubs >/dev/null 2>&1 || true
     new=$(inbox_lines $hubs | unshown_lines)
@@ -902,18 +902,23 @@ H
 }
 
 # --- диспетчер -------------------------------------------------------------------------------------
-OPT_HUB="${XCHG_HUB:-}"
-case "${1:-help}" in help|-h|--help) cmd_help; exit 0;; version) cmd_version; exit 0;; esac
-load_conf
-case "${1:-help}" in
-  wait) shift; cmd_wait "$@";;
-  mute) shift; cmd_mute "$@";;
-  inbox) shift; cmd_inbox "$@";;   read) shift; cmd_read "$@";;      send) shift; cmd_send "$@";;
-  post) shift; cmd_post "$@";;     reply) shift; cmd_reply "$@";;    claim) shift; cmd_claim "$@";;
-  done) shift; cmd_done "$@";;     seen) shift; cmd_seen "${1:-}";;  sent) cmd_sent;;
-  thread) shift; cmd_thread "$@";; forward) shift; cmd_forward "$@";; who) shift; cmd_who "$@";;
-  contact) shift; cmd_contact "$@";; agent) cmd_agent;;              projects) shift; cmd_projects "$@";;
-  hubs) cmd_hubs;;                 hub) shift; cmd_hub "$@";;        log) shift; cmd_log "$@";;
-  sync) shift; cmd_sync "$@";;     status) cmd_status;;              install) cmd_install;;
-  *) echo "xchg: неизвестная команда «$1» (xchg help)" >&2; exit 2;;
-esac
+# Весь запуск — внутри main, а последняя строка читается целиком ещё до исполнения: если файл
+# перепишут на месте, пока команда работает, bash не дочитает из него обрывок после неё.
+main() {
+  OPT_HUB="${XCHG_HUB:-}"
+  case "${1:-help}" in help|-h|--help) cmd_help; exit 0;; version) cmd_version; exit 0;; esac
+  load_conf
+  case "${1:-help}" in
+    wait) shift; cmd_wait "$@";;
+    mute) shift; cmd_mute "$@";;
+    inbox) shift; cmd_inbox "$@";;   read) shift; cmd_read "$@";;      send) shift; cmd_send "$@";;
+    post) shift; cmd_post "$@";;     reply) shift; cmd_reply "$@";;    claim) shift; cmd_claim "$@";;
+    done) shift; cmd_done "$@";;     seen) shift; cmd_seen "${1:-}";;  sent) cmd_sent;;
+    thread) shift; cmd_thread "$@";; forward) shift; cmd_forward "$@";; who) shift; cmd_who "$@";;
+    contact) shift; cmd_contact "$@";; agent) cmd_agent;;              projects) shift; cmd_projects "$@";;
+    hubs) cmd_hubs;;                 hub) shift; cmd_hub "$@";;        log) shift; cmd_log "$@";;
+    sync) shift; cmd_sync "$@";;     status) cmd_status;;              install) cmd_install;;
+    *) echo "xchg: неизвестная команда «$1» (xchg help)" >&2; exit 2;;
+  esac
+}
+main "$@"; exit $?

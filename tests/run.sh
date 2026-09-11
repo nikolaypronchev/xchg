@@ -172,6 +172,20 @@ run in_api "$X" claim "$H/exchange/work/projects/api/20260910-091000_carol_q2.md
 run in_api "$X" wait --timeout 2 --interval 1; assert_eq "$RC" 3 "взятая задача переехала, но повторно не будит"
 run in_api "$X" wait --timeout abc; assert_eq "$RC" 2 "неверный таймаут — ошибка вызова"
 
+t "файл клиента переписали на месте, пока команда работала"
+assert_eq "$(tail -n 1 "$X")" 'main "$@"; exit $?' "последняя строка — вызов main и выход"
+XC="$SB/client-copy"; mkdir -p "$XC/bin" "$XC/hub"; cp "$X" "$XC/bin/xchg"; cp "$ROOT/hub/README.md" "$XC/hub/"
+( cd "$SB/repos/api" && "$XC/bin/xchg" wait --interval 1 > "$SB/rw.out" 2> "$SB/rw.err"; echo $? > "$SB/rw.rc" ) &
+BG=$!; sleep 2
+{ head -n 1 "$XC/bin/xchg"; printf '# %0200d\n' 0; tail -n +2 "$XC/bin/xchg"; } > "$XC/new"; cat "$XC/new" > "$XC/bin/xchg"   # тот же inode, как у редактора
+git -C "$W2" pull -q
+printf -- '---\nfrom: bob/api\nto: @api:alice\nkind: task\ndate: 2026-09-11T08:00:00Z\n---\n# Пока переписывали клиент\n' > "$W2/projects/api/alice/20260911-080000_bob_rewrite.md"
+( cd "$W2" && git add -A && git commit -qm rewrite && git push -q )
+wait "$BG" 2>/dev/null || true
+assert_eq "$(cat "$SB/rw.rc")" 0 "команда завершилась своим кодом"
+assert_eq "$(cat "$SB/rw.err")" "" "без обрывков скрипта в stderr"
+assert_contains "$(cat "$SB/rw.out")" "Пока переписывали клиент"
+
 t "mute и хуки: чужое письмо не будит и не повторяется"
 hook() { local ev="$1"; shift; printf '{"session_id":"t","hook_event_name":"%s"}' "$ev" | "$@"; }
 git -C "$W2" pull -q
