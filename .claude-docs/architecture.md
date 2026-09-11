@@ -7,7 +7,7 @@ tags: [memory/repo, architecture]
 
 1. **Утилиты** — `die/udie/warn`, `meta` (поле frontmatter), `title`, `body_of`, `plural`, `rel_time`.
 2. **Конфиг** — `parse_conf` (awk печатает `G/H/S/E` строки с TAB, bash раскладывает через `hub_new/hub_set` в параллельные массивы `HUBS/HUB_PATHS/HUB_REMOTES/HUB_LOGINS`; читать — `hub_path/hub_remote/hub_login`, искать — `hub_idx`), `load_conf`, правки `conf_set_global/conf_set_hub/conf_rm_hub/conf_add_hub` (awk → tmp → mv), `ensure_conf`, `check_contract`.
-3. **Синхронизация** — `hub_sync` (pull одного хаба; стампы в `.git/xchg-last-sync`, `.git/xchg-unavail`), `sync_hubs` (параллельно, дедлайн 20 с), `self_update`, `hub_push` (commit + pull --rebase + push ×3).
+3. **Синхронизация** — `hub_sync` (pull одного хаба и дотолкнуть то, что не ушло после неудачного push; стампы в `.git/xchg-last-sync`, `.git/xchg-unavail`), `sync_hubs` (параллельно, дедлайн 20 с), `self_update`, `hub_push` (commit + pull --rebase + push ×3).
 4. **Люди и проекты** — `resolve_user` (people/ → contacts.md, python3 casefold или awk), `has_project`, `user_projects` (участие выводится из каталогов агентов), `register_me` и `agent_passport` (авторегистрация при `hub add/init` и `projects add`).
 5. **Адреса** — `parse_addr` → `A_HUB/A_REL/A_LABEL` (части в любом порядке, хаб выводится из содержимого), `addr_label` (обратно в короткую метку), `locate` (файл по `хаб:путь`, абсолютному пути или единственному совпадению).
 6. **Агент** — `repo_root`, `cur_project`, `project_norm` (имя репозитория → допустимое имя проекта) (basename главного репозитория или `git config xchg.project`), `sender_id` (`user/project`), `my_addrs` (адреса сессии), `other_addrs` (мои адреса в других проектах), `cmd_agent`.

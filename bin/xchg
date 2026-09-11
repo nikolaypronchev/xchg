@@ -21,6 +21,7 @@ BRIEF=0                                # режим хука: недоступн
 SHOW_ALL=0                             # показывать чужие проекты
 SHOW_HISTORY=0                         # показывать уже прочитанные заметки
 HOOK_EVENT=""                          # событие хука Claude Code (из JSON на stdin)
+PUSH_FAILED=0                          # запись осталась в локальном клоне хаба: команда выйдет с кодом 4
 # хуки Claude Code запускаются без ssh-agent в окружении: подхватить типовой сокет, если есть
 [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.ssh/agent.sock" ] && export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 
@@ -136,6 +137,10 @@ hub_sync() {  # <hub>; stdout — уведомления для агента
   local before; before=$(git -C "$d" rev-parse HEAD 2>/dev/null || echo none)
   if with_timeout 20 git -C "$d" pull -q --rebase --autostash >/dev/null 2>&1; then
     echo "$now" > "$stamp"; rm -f "$d/.git/xchg-unavail"
+    # хаб доступен — отправить то, что осталось от неудачного push: иначе у сервиса без исходящих писем оно не уйдёт никогда
+    if [ "$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)" -gt 0 ]; then
+      with_timeout 20 git -C "$d" push -q >/dev/null 2>&1 || true
+    fi
     local after; after=$(git -C "$d" rev-parse HEAD)
     if [ "$before" != none ] && [ "$before" != "$after" ]; then
       local ch; ch=$(git -C "$d" diff --name-only "$before" "$after" -- README.md contacts.md | tr '\n' ' ')
@@ -177,7 +182,7 @@ hub_push() {  # <hub> <сообщение коммита>
   hub_has_remote "$h" || return 0
   local i; for i in 1 2 3; do git -C "$d" pull -q --rebase --autostash >/dev/null 2>&1 && git -C "$d" push -q 2>/dev/null && return 0
     git -C "$d" rebase --abort >/dev/null 2>&1 || true; sleep 1; done
-  warn "push в хаб $h не удался, коммит остался локально (xchg sync повторит)"; return 1
+  PUSH_FAILED=1; warn "push в хаб $h не удался, коммит остался локально — отправит xchg sync"; return 1
 }
 
 # --- люди и проекты хаба ---------------------------------------------------------------------
@@ -826,7 +831,9 @@ cmd_hub() {
 }
 cmd_log() { require_hubs; local n=20 hubs h; while [ $# -gt 0 ]; do case "$1" in --hub) OPT_HUB="$2"; shift 2;; *) n="$1"; shift;; esac; done
   hubs=$(hub_filter); sync_hubs $hubs; for h in $hubs; do echo "== $h"; git -C "$(hub_path "$h")" log --oneline -n "$n"; done; }
-cmd_sync() { require_hubs; [ "${1:-}" = --hub ] && OPT_HUB="$2"; local hubs; hubs=$(hub_filter); sync_hubs $hubs; echo "synced: $hubs"; }
+cmd_sync() { require_hubs; [ "${1:-}" = --hub ] && OPT_HUB="$2"; local hubs unsent; hubs=$(hub_filter); sync_hubs $hubs
+  unsent=$(unsent_warn $hubs); echo "synced: $hubs"
+  if [ -n "$unsent" ]; then echo "$unsent"; PUSH_FAILED=1; fi; return 0; }
 
 # --- установка и состояние ---------------------------------------------------------------------
 cmd_install() {
@@ -920,5 +927,6 @@ main() {
     sync) shift; cmd_sync "$@";;     status) cmd_status;;              install) cmd_install;;
     *) echo "xchg: неизвестная команда «$1» (xchg help)" >&2; exit 2;;
   esac
+  [ "$PUSH_FAILED" = 0 ] || return 4   # записано локально, но в хаб не ушло
 }
 main "$@"; exit $?

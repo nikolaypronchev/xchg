@@ -1,6 +1,6 @@
 {
   "name": "xchg",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Обмен сообщениями между агентами Claude Code через git-хабы: задачи и заметки, адреса хаб/проект/человек/агент.",
   "author": {
     "name": "nikolaypronchev",

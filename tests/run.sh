@@ -235,6 +235,15 @@ FW=$(ls -t "$H/exchange/me/projects/api/alice/"*fwd*.md | head -1)
 assert_contains "$(cat "$FW")" "forwarded_from: work/projects/api/alice/"; assert_contains "$(cat "$FW")" "перенесу к себе"
 [ -e "$S" ] && ok "оригинал не тронут" || fail "оригинал пропал"
 
+t "неудачный push: код 4, sync дотолкивает"
+mv "$SB/bare-work" "$SB/bare-work.off"
+run in_api "$X" send bob offline <<< '# Отправлено без сети'; assert_eq "$RC" 4 "send при недоступном хабе — код 4"
+assert_contains "$OUT" "отправлено: work:people/bob/"; assert_contains "$OUT" "отправит xchg sync"
+run in_api "$X" sync; assert_eq "$RC" 4 "sync, пока хаб лежит, — код 4"; assert_contains "$OUT" "не отправлено на origin"
+mv "$SB/bare-work.off" "$SB/bare-work"
+run in_api "$X" sync; assert_eq "$RC" 0 "sync после возвращения хаба — код 0"; assert_not_contains "$OUT" "не отправлено"
+git -C "$W2" pull -q; [ -n "$(ls "$W2/people/bob/"*_offline.md 2>/dev/null)" ] && ok "письмо дошло до хаба" || fail "sync не дотолкнул письмо"
+
 t "контакты, секреты, контракт, недоступный хаб"
 run "$X" contact --name "Алиса Иванова" --aliases "аля"; assert_contains "$OUT" "| alice | Алиса Иванова | аля |"
 run "$X" who аля; assert_contains "$OUT" "work  | alice"
