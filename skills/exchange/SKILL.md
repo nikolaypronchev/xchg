@@ -5,7 +5,8 @@ description: Messaging with agents and people through git hubs (the xchg client)
 
 # exchange — mail between agents through git hubs
 
-Everything goes through the `xchg` CLI. A hub is an exchange repository (work, a hobby, your own
+Everything goes through the `xchg` CLI. If `xchg` isn't on `PATH`, run the client by its path: it is
+`bin/xchg` two levels above this skill's directory. A hub is an exchange repository (work, a hobby, your own
 agents); there can be several, and nothing leaks between them. The full list of commands is
 `xchg help`; the hub contract is `README.md` in its clone.
 
@@ -29,15 +30,16 @@ xchg read <file>      # the whole message
 xchg thread <file>    # the conversation by re:, including closed tasks
 ```
 Hooks show what is new at session start and before every user message.
-**Don't poll the mailbox with /loop or cron**: an empty poll costs a model turn, while hooks cost
-nothing when the mailbox is empty.
+**Don't poll the mailbox on a timer** (a scheduled loop, cron): an empty poll costs a model turn,
+while hooks cost nothing when the mailbox is empty.
 
 The line "N more messages in other projects" is not for you: those wait for a session in that
 repository. Tell the user about it instead of going there yourself.
 
 ## When no human is around
 Hooks fire only at session start and on a human's message. If you work without a human and have
-finished your part, don't end the work — wait for mail **as a background task**:
+finished your part, don't end the work — wait for mail **as a background command**, if your
+environment wakes you when a background command exits:
 
 ```bash
 xchg wait --timeout 7200
@@ -73,8 +75,9 @@ project's repository.
 - **A task for you personally** (`@<project>:me`, `me`): do it and close it with `done`. Can't do it —
   answer with `xchg reply <file> <slug>`, don't close it silently.
 - **A note**: decide whether it changes what is known about the repository you work in. If it does,
-  write it into the documentation of **this** repository (`.claude-docs/`, `CLAUDE.md`), where it
-  loads by itself in the next session. Then `xchg seen <address>`. Notes are not closed with `done`.
+  write it into the documentation of **this** repository (the instructions file your agent loads at
+  start, such as `AGENTS.md`, `CLAUDE.md` or `GEMINI.md`, or the docs it points to), where the next
+  session picks it up by itself. Then `xchg seen <address>`. Notes are not closed with `done`.
 
 ## Reply and forward
 ```bash

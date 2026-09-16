@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xchg — messaging between Claude Code agents through git hubs.
+# xchg — messaging between coding agents through git hubs.
 # Usage: xchg <command> [...]; `xchg help` lists commands. Documentation: docs/ in the xchg repository.
 set -euo pipefail
 
@@ -12,17 +12,20 @@ SELF="$0"
 while [ -L "$SELF" ]; do t=$(readlink "$SELF"); case "$t" in /*) SELF="$t";; *) SELF="$(dirname "$SELF")/$t";; esac; done
 XCHG_ROOT="$(cd "$(dirname "$SELF")/.." && pwd -P)"
 
-# Installed as a Claude Code plugin? Then the plugin owns the clone, PATH and hooks.
-case "$XCHG_ROOT" in "$HOME/.claude/plugins/"*) PLUGIN_MODE=1;; *) PLUGIN_MODE=0;; esac
+# Installed as a harness package (plugin/extension)? Then the harness owns the files, hooks and updates.
+case "$XCHG_ROOT" in
+  "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/"*|"${CODEX_HOME:-$HOME/.codex}/plugins/"*|"$HOME/.gemini/extensions/"*) PLUGIN_MODE=1;;
+  *) PLUGIN_MODE=0;;
+esac
 CONF_DIR="${XCHG_CONF_DIR:-$HOME/.config/xchg}"
 CONF="$CONF_DIR/xchg.conf"
 MAX_AGE="${XCHG_MAX_AGE:-0}"           # seconds; >0 = skip origin if synced recently (hooks)
 BRIEF=0                                # hook mode: report an unreachable hub at most once an hour
 SHOW_ALL=0                             # show other projects too
 SHOW_HISTORY=0                         # show notes already read
-HOOK_EVENT=""                          # Claude Code hook event (from JSON on stdin)
+HOOK_EVENT=""                          # agent hook event (from JSON on stdin)
 PUSH_FAILED=0                          # a write stayed in the local hub clone: the command exits with 4
-# Claude Code hooks run without ssh-agent in the environment: pick up the usual socket if present
+# agent hooks run without ssh-agent in the environment: pick up the usual socket if present
 [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.ssh/agent.sock" ] && export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
 
 # --- utilities ---------------------------------------------------------------------------
@@ -43,6 +46,10 @@ rel_time() {  # epoch -> "5m" / "3h" / "2d"
 meta()  { sed -n '/^---$/,/^---$/{s/^'"$1"': *//p;}' "$2" | head -1; }
 title() { grep -m1 '^# ' "$1" 2>/dev/null | sed 's/^# //' || true; }
 body_of() { awk 'NR==1 && $0!="---"{p=1} p{print;next} /^---$/{c++; if(c==2)p=1}' "$1"; }
+json_str() {  # stdin -> the contents of a JSON string literal (without quotes); lines joined with \n
+  awk 'BEGIN{ORS=""} { gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); gsub(/\t/,"\\t"); gsub(/\r/,""); gsub(/[\001-\037]/,"")
+    if (NR>1) print "\\n"; print }'
+}
 
 # --- config: hub registry ------------------------------------------------------------------
 # The hub registry is parallel indexed arrays: bash 3.2 (macOS system bash) has no associative ones.
@@ -263,7 +270,7 @@ agent_passport() {  # <hub> <project>: agent passport = person x project
   me=$(hub_login "$h"); f="$d/projects/$p/$me/README.md"
   [ -f "$f" ] && return 0
   repo=$(git remote get-url origin 2>/dev/null || true)
-  for docs in .claude-docs/index.md CLAUDE.md README.md; do [ -f "$docs" ] && break || docs=""; done
+  for docs in .claude-docs/index.md CLAUDE.md AGENTS.md GEMINI.md README.md; do [ -f "$docs" ] && break || docs=""; done
   mkdir -p "$(dirname "$f")"
   { printf '# %s on project %s\n\n' "$me" "$p"
     printf 'Person: %s\n' "$me"
@@ -474,12 +481,14 @@ cmd_inbox() {
     record_shown "$out"
     others=$(others_note "$mode" $hubs); unsent=$(unsent_warn $hubs)
     n=$(printf '%s' "$out" | grep -c . || true)
-    if [ "$n" -gt 0 ]; then
-      if [ "$mode" = all ]; then echo "xchg: $n $(plural "$n" message messages) in the inbox (xchg inbox):"
-      else echo "xchg: $n new $(plural "$n" message messages) (xchg inbox):"; fi
-      echo "$out"
-    fi
-    [ -n "$others" ] && echo "$others"; [ -n "$unsent" ] && echo "$unsent"; return 0
+    local text; text=$(
+      if [ "$n" -gt 0 ]; then
+        if [ "$mode" = all ]; then echo "xchg: $n $(plural "$n" message messages) in the inbox (xchg inbox):"
+        else echo "xchg: $n new $(plural "$n" message messages) (xchg inbox):"; fi
+        echo "$out"
+      fi
+      [ -n "$others" ] && echo "$others"; [ -n "$unsent" ] && echo "$unsent"; true)
+    hook_print "$text"; return 0
   fi
   out=$(inbox_lines $hubs)
   record_shown "$out"
@@ -513,11 +522,20 @@ unshown_lines() {  # stdin: inbox lines -> only those this agent hasn't been sho
     read -r h _ _ rel _ <<< "$line"; is_shown "$h" "$(basename "$rel")" || printf '%s\n' "$line"; done
   return 0
 }
-read_hook_input() {  # a Claude Code hook passes JSON on stdin; run by hand, stdin is a terminal: don't wait
+read_hook_input() {  # an agent hook passes JSON on stdin; run by hand, stdin is a terminal: don't wait
   [ -t 0 ] && return 0
   local j=""; IFS= read -r -t 1 -d '' j || true
-  HOOK_EVENT=$(printf '%s' "$j" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+  HOOK_EVENT=$(printf '%s' "$j" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' | head -1)
   return 0
+}
+# Hook events differ by harness, the output doesn't: session start (SessionStart) shows everything open, the
+# prompt event (UserPromptSubmit, BeforeAgent) only what is new. From a hook the text goes out as
+# hookSpecificOutput.additionalContext, the one form every supported harness adds to the model context
+# (some show plain stdout to the user instead). Nothing to say = 0 bytes, never "{}".
+hook_print() {  # <text>
+  [ -n "$1" ] || return 0
+  if [ -z "$HOOK_EVENT" ]; then printf '%s\n' "$1"; return 0; fi
+  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$HOOK_EVENT" "$(printf '%s\n' "$1" | json_str)"
 }
 # "Muted" is a message not for this agent: don't show it and don't wake the agent. The mark is local and
 # per agent; nothing changes in the hub. The key is the file name, as for "shown".
@@ -884,32 +902,55 @@ cmd_sync() { require_hubs; [ "${1:-}" = --hub ] && OPT_HUB="$2"; local hubs unse
   if [ -n "$unsent" ]; then echo "$unsent"; PUSH_FAILED=1; fi; return 0; }
 
 # --- install and status ------------------------------------------------------------------------
+# Supported harnesses. For each: where its config lives, the hooks file, the session start and prompt
+# events, the timeout (unit differs by harness) and the skills directory it reads.
+HARNESSES="claude-code codex gemini"
+harness_info() {  # <harness> -> H_DIR H_HOOKS H_START H_PROMPT H_TIMEOUT H_SKILLS
+  case "$1" in
+    claude-code) H_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; H_HOOKS="$H_DIR/settings.json"
+                 H_START=SessionStart; H_PROMPT=UserPromptSubmit; H_TIMEOUT=30; H_SKILLS="$H_DIR/skills";;
+    codex)       H_DIR="${CODEX_HOME:-$HOME/.codex}"; H_HOOKS="$H_DIR/hooks.json"
+                 H_START=SessionStart; H_PROMPT=UserPromptSubmit; H_TIMEOUT=30; H_SKILLS="$HOME/.agents/skills";;
+    gemini)      H_DIR="$HOME/.gemini"; H_HOOKS="$H_DIR/settings.json"
+                 H_START=SessionStart; H_PROMPT=BeforeAgent; H_TIMEOUT=30000; H_SKILLS="$HOME/.agents/skills";;
+  esac
+}
+HOOK_START='xchg inbox --brief 2>/dev/null || true'
+HOOK_PROMPT='xchg inbox --brief --max-age 300 2>/dev/null || true'
+has_hook() { [ -f "$1" ] && jq -e --arg e "$2" '(.hooks[$e] // []) | map(.hooks[]?.command // "") | any(test("xchg inbox --brief"))' "$1" >/dev/null 2>&1; }
+add_hook() {  # <file> <event> <command> <timeout>
+  if has_hook "$1" "$2"; then echo "  hook $2 already present"; return 0; fi
+  [ -s "$1" ] || echo '{}' > "$1"
+  jq --arg e "$2" --arg c "$3" --argjson t "$4" '.hooks[$e] = ((.hooks[$e] // []) + [{"hooks":[{"type":"command","command":$c,"timeout":$t}]}])' "$1" > "$1.tmp" \
+    && mv "$1.tmp" "$1" && echo "  hook $2 added to $1"
+}
 cmd_install() {
   if [ "$PLUGIN_MODE" = 1 ]; then
     ensure_conf
-    echo "xchg is installed as a Claude Code plugin: the command is on PATH, the plugin provides hooks and the skill."
-    echo "Now connect a hub: /xchg:setup, or by hand: xchg hub add work <remote>"
+    echo "xchg is installed as a harness package: the package provides the hooks and the skills."
+    echo "Now connect a hub with the xchg-setup skill, or by hand: xchg hub add work <remote>"
     return 0
   fi
-  mkdir -p "$HOME/.local/bin" "$HOME/.claude/skills"
-  ln -sfn "$XCHG_ROOT/bin/xchg" "$HOME/.local/bin/xchg"; ln -sfn "$XCHG_ROOT/skills/exchange" "$HOME/.claude/skills/exchange"
-  echo "symlink: ~/.local/bin/xchg -> $XCHG_ROOT/bin/xchg, ~/.claude/skills/exchange"
+  mkdir -p "$HOME/.local/bin"; ln -sfn "$XCHG_ROOT/bin/xchg" "$HOME/.local/bin/xchg"
+  echo "symlink: ~/.local/bin/xchg -> $XCHG_ROOT/bin/xchg"
   case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "WARNING: ~/.local/bin is not on PATH, add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\"";; esac
-  local st="$HOME/.claude/settings.json"
-  if have jq; then
-    [ -f "$st" ] || echo '{}' > "$st"
-    add_hook() { if jq -e --arg e "$1" --arg c "$2" '(.hooks[$e] // []) | map(.hooks[]?.command) | any(. == $c)' "$st" >/dev/null; then echo "hook $1 already present"; return 0; fi
-      jq --arg e "$1" --arg c "$2" '.hooks[$e] = ((.hooks[$e] // []) + [{"matcher":"*","hooks":[{"type":"command","command":$c}]}])' "$st" > "$st.tmp" && mv "$st.tmp" "$st" && echo "hook $1 added to $st"; }
-    add_hook SessionStart 'timeout 20 xchg inbox --brief 2>/dev/null || true'
-    add_hook UserPromptSubmit 'timeout 20 xchg inbox --brief --max-age 300 2>/dev/null || true'
-  else echo "no jq: add hooks to $st, SessionStart: 'timeout 20 xchg inbox --brief 2>/dev/null || true' and UserPromptSubmit: the same with --max-age 300"; fi
+  local hn found=0 sk
+  for hn in $HARNESSES; do harness_info "$hn"; [ -d "$H_DIR" ] || continue; found=1
+    echo "$hn ($H_DIR):"
+    mkdir -p "$H_SKILLS"
+    for sk in "$XCHG_ROOT"/skills/*/; do sk="${sk%/}"; ln -sfn "$sk" "$H_SKILLS/$(basename "$sk")"; echo "  skill $(basename "$sk") -> $H_SKILLS"; done
+    if have jq; then add_hook "$H_HOOKS" "$H_START" "$HOOK_START" "$H_TIMEOUT"; add_hook "$H_HOOKS" "$H_PROMPT" "$HOOK_PROMPT" "$H_TIMEOUT"
+    else echo "  no jq: add to $H_HOOKS hooks $H_START: '$HOOK_START' and $H_PROMPT: '$HOOK_PROMPT' (timeout $H_TIMEOUT)"; fi
+    [ "$hn" = codex ] && echo "  codex runs a new hook only after you trust it: open /hooks in a session"
+  done
+  [ "$found" = 1 ] || echo "no supported harness found (looked for: ~/.claude, ~/.codex, ~/.gemini): start your agent once and run xchg install again"
   ensure_conf
   [ -n "$CFG_DEFAULT" ] || { [ ${#HUBS[@]} -gt 0 ] && conf_set_global default "${HUBS[0]}"; }
   echo "done. Connect to a hub: xchg hub add work <remote>; create your own: xchg hub init work --remote <url>"
   echo "A hub for your own agents (messages between your repositories): xchg hub init me"
 }
 cmd_status() {
-  echo "xchg $(cmd_version)  ($XCHG_ROOT, contract $XCHG_CONTRACT, $([ "$PLUGIN_MODE" = 1 ] && echo 'Claude Code plugin' || echo 'standalone install'))"
+  echo "xchg $(cmd_version)  ($XCHG_ROOT, contract $XCHG_CONTRACT, $([ "$PLUGIN_MODE" = 1 ] && echo 'harness package' || echo 'standalone install'))"
   echo "config: $CONF ($CONF_MODE); default: ${CFG_DEFAULT:--}; project here: $(cur_project 2>/dev/null || echo '-')"
   local h d st ahead; for h in ${HUBS[@]+"${HUBS[@]}"}; do d="$(hub_path "$h")"
     if [ -d "$d/.git" ]; then st="synced $([ -f "$d/.git/xchg-last-sync" ] && echo "$(rel_time "$(cat "$d/.git/xchg-last-sync")") ago" || echo never)"
@@ -917,17 +958,21 @@ cmd_status() {
       [ -f "$d/.git/xchg-unavail" ] && st="$st, UNREACHABLE since $(rel_time "$(cat "$d/.git/xchg-unavail")") ago"
     else st="NO CLONE"; fi
     printf '  %-8s contract %-4s %s\n' "$h" "$(hub_contract "$h" || true)" "$st"; done
-  if [ "$PLUGIN_MODE" = 1 ]; then echo "hooks and skill: from the plugin"; return 0; fi
-  local st2="$HOME/.claude/settings.json"; echo "hooks: SessionStart $(grep -q 'xchg inbox --brief' "$st2" 2>/dev/null && echo ok || echo MISSING), UserPromptSubmit $(grep -q 'xchg inbox --brief --max-age' "$st2" 2>/dev/null && echo ok || echo MISSING)"
-  echo "skill: $(readlink "$HOME/.claude/skills/exchange" 2>/dev/null || echo 'no symlink')"
+  if [ "$PLUGIN_MODE" = 1 ]; then echo "hooks and skills: from the harness package"; return 0; fi
+  local hn ok
+  for hn in $HARNESSES; do harness_info "$hn"; [ -d "$H_DIR" ] || continue
+    ok() { grep -q "$1" "$H_HOOKS" 2>/dev/null && echo ok || echo MISSING; }
+    echo "$hn: hooks $H_START $(ok 'xchg inbox --brief'), $H_PROMPT $(ok 'xchg inbox --brief --max-age'); skill: $(readlink "$H_SKILLS/exchange" 2>/dev/null || echo 'no symlink')"
+  done
 }
-cmd_version() {  # a commit in a git clone, the manifest version in an installed plugin
-  git -C "$XCHG_ROOT" log -1 --format='%h %ci %s' 2>/dev/null && return 0
-  local v; v=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$XCHG_ROOT/.claude-plugin/plugin.json" 2>/dev/null | head -1)
+cmd_version() {  # a commit in a developer clone, the manifest version in an installed package
+  if [ "$PLUGIN_MODE" = 0 ]; then git -C "$XCHG_ROOT" log -1 --format='%h %ci %s' 2>/dev/null && return 0; fi
+  local m v=""; for m in .claude-plugin/plugin.json .codex-plugin/plugin.json gemini-extension.json; do
+    v=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$XCHG_ROOT/$m" 2>/dev/null | head -1); [ -n "$v" ] && break; done
   echo "${v:-unknown}"
 }
 cmd_help() { cat <<'H'
-xchg — messaging between Claude Code agents through git hubs
+xchg — messaging between coding agents through git hubs
 
 Address: [hub:]part[:part] — all | @project | person | @project:person (part order doesn't matter)
   all              everyone in the hub     @api          everyone on the project

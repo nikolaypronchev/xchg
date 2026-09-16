@@ -24,7 +24,18 @@ in_api() { ( cd "$SB/repos/api" && "$@" ); }
 in_web() { ( cd "$SB/repos/web" && "$@" ); }
 
 t "install and hub creation"
-run "$X" install </dev/null; assert_eq "$RC" 0 "install rc"; assert_contains "$OUT" "hook SessionStart added"
+mkdir -p "$H/.claude" "$H/.codex" "$H/.gemini"   # harnesses present: install configures each of them
+run "$X" install </dev/null; assert_eq "$RC" 0 "install rc"
+for hf in "claude-code .claude/settings.json UserPromptSubmit 30" "codex .codex/hooks.json UserPromptSubmit 30" "gemini .gemini/settings.json BeforeAgent 30000"; do
+  set -- $hf
+  assert_contains "$OUT" "$1 ($H/"
+  assert_eq "$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$H/$2")" 'xchg inbox --brief 2>/dev/null || true' "$1: session start hook"
+  assert_eq "$(jq -r ".hooks.$3[0].hooks[0].command" "$H/$2")" 'xchg inbox --brief --max-age 300 2>/dev/null || true' "$1: prompt hook ($3)"
+  assert_eq "$(jq -r ".hooks.$3[0].hooks[0].timeout" "$H/$2")" "$4" "$1: timeout in the harness's unit"
+done
+[ -L "$H/.claude/skills/exchange" ] && [ -L "$H/.agents/skills/xchg-setup" ] && ok "skills linked" || fail "skills not linked"
+run "$X" install </dev/null; assert_contains "$OUT" "hook BeforeAgent already present"; ok "install is idempotent"
+assert_eq "$(jq '.hooks.SessionStart | length' "$H/.claude/settings.json")" 1 "no duplicate hooks"
 run "$X" inbox --brief; assert_eq "$OUT" "" "no hubs: the hook stays silent (0 bytes)"
 git init -q --bare "$SB/bare-work"
 git config --global init.defaultBranch master   # the hub branch must not depend on the local default
@@ -34,22 +45,51 @@ git config --global init.defaultBranch main
 assert_contains "$(cat "$H/exchange/work/README.md")" "contract: 6"
 run "$X" hubs; assert_contains "$OUT" "work*"; assert_contains "$OUT" "alice"
 
-t "plugin manifests"
-for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json commands/setup.md; do
-  [ -f "$ROOT/$f" ] && ok "has $f" || fail "no $f"
+t "harness packages"
+VER=$(jq -r .version "$ROOT/gemini-extension.json")
+for m in harness/claude-code/.claude-plugin/plugin.json .codex-plugin/plugin.json; do
+  assert_eq "$(jq -r .version "$ROOT/$m")" "$VER" "$m: same version as gemini-extension.json"
 done
-assert_contains "$(cat "$ROOT/hooks/hooks.json")" '${CLAUDE_PLUGIN_ROOT}/bin/xchg'
-assert_contains "$(cat "$ROOT/.claude-plugin/marketplace.json")" '"source": "./"'
-assert_not_contains "$(cat "$ROOT/.claude-plugin/plugin.json")" '"hooks"'
-ok "the manifest doesn't reference hooks/hooks.json: it loads by itself, a reference is a duplicate"
+assert_eq "$(jq -r '.plugins[0].source' "$ROOT/.claude-plugin/marketplace.json")" "./harness/claude-code" "claude-code marketplace points to its package"
+assert_eq "$(jq -r '.plugins[0].source.path' "$ROOT/.agents/plugins/marketplace.json")" "./" "codex marketplace points to the root"
+for l in bin skills hub docs; do [ -e "$ROOT/harness/claude-code/$l/." ] && ok "claude-code package links $l" || fail "harness/claude-code/$l is broken"; done
+assert_not_contains "$(cat "$ROOT/harness/claude-code/.claude-plugin/plugin.json")" '"hooks"'
+ok "the claude-code manifest doesn't reference hooks/hooks.json: it loads by itself, a reference is a duplicate"
+# each harness gets its own hooks file: event names, the root variable and timeout units differ
+for hf in "claude-code harness/claude-code/hooks/hooks.json UserPromptSubmit" "codex harness/codex/hooks.json UserPromptSubmit" "gemini hooks/hooks.json BeforeAgent"; do
+  set -- $hf; name=$1; file=$2; prompt=$3
+  assert_eq "$(jq -r '.hooks | keys | sort | join(" ")' "$ROOT/$file")" "$(printf '%s\n' SessionStart "$prompt" | sort | tr '\n' ' ' | sed 's/ $//')" "$name: exactly the two events"
+  for ev in SessionStart "$prompt"; do
+    c=$(jq -r ".hooks.$ev[0].hooks[0].command" "$ROOT/$file" | sed "s|\${CLAUDE_PLUGIN_ROOT}|$ROOT|; s|\${PLUGIN_ROOT}|$ROOT|; s|\${extensionPath}|$ROOT|")
+    assert_contains "$c" "$ROOT/bin/xchg"
+  done
+done
+[ "$(jq -r '.hooks' "$ROOT/.codex-plugin/plugin.json")" = "./harness/codex/hooks.json" ] && ok "codex uses its own hooks file, not the root one" || fail "codex hooks path"
+assert_contains "$(cat "$ROOT/harness/claude-code/commands/setup.md")" "xchg-setup"
+assert_contains "$(cat "$ROOT/commands/xchg/setup.toml")" "xchg-setup"
 if command -v claude >/dev/null 2>&1; then
-  run claude plugin validate "$ROOT"; assert_eq "$RC" 0 "claude plugin validate"
+  run claude plugin validate "$ROOT/harness/claude-code"; assert_eq "$RC" 0 "claude plugin validate"
   # validate doesn't catch load errors, so do a real install into a separate HOME
-  PH="$SB/plugin-home"; mkdir -p "$PH"
-  run env HOME="$PH" claude plugin marketplace add "$ROOT"; assert_eq "$RC" 0 "the marketplace is added"
-  run env HOME="$PH" claude plugin install xchg@xchg -y; assert_eq "$RC" 0 "the plugin installs"
+  PH="$SB/claude-home"; mkdir -p "$PH"
+  run env HOME="$PH" claude plugin marketplace add "$ROOT"; assert_eq "$RC" 0 "claude-code: the marketplace is added"
+  run env HOME="$PH" claude plugin install xchg@xchg; assert_eq "$RC" 0 "claude-code: the plugin installs"
   run env HOME="$PH" claude plugin list; assert_contains "$OUT" "xchg@xchg"; assert_not_contains "$OUT" "failed to load"
-else ok "no claude CLI: plugin validation and install skipped"; fi
+  CI=$(ls -d "$PH"/.claude/plugins/cache/xchg/xchg/*/ | head -1)
+  [ -f "$CI/bin/xchg" ] && [ -f "$CI/skills/exchange/SKILL.md" ] && [ -f "$CI/hub/README.md" ] && ok "claude-code: links became files in the cache" || fail "claude-code: package incomplete"
+else ok "no claude CLI: claude-code install skipped"; fi
+if command -v codex >/dev/null 2>&1; then
+  PH="$SB/codex-home"; mkdir -p "$PH/.codex"
+  run env HOME="$PH" CODEX_HOME="$PH/.codex" codex plugin marketplace add "$ROOT"; assert_eq "$RC" 0 "codex: the marketplace is added"
+  run env HOME="$PH" CODEX_HOME="$PH/.codex" codex plugin add xchg@xchg; assert_eq "$RC" 0 "codex: the plugin installs"
+  CI=$(ls -d "$PH"/.codex/plugins/cache/xchg/xchg/*/ | head -1)
+  [ -f "$CI/bin/xchg" ] && [ -f "$CI/harness/codex/hooks.json" ] && [ -f "$CI/skills/exchange/SKILL.md" ] && ok "codex: package complete" || fail "codex: package incomplete"
+else ok "no codex CLI: codex install skipped"; fi
+if command -v gemini >/dev/null 2>&1; then
+  PH="$SB/gemini-home"; mkdir -p "$PH"
+  run bash -c "yes y | HOME='$PH' gemini extensions install '$ROOT' --consent"; assert_eq "$RC" 0 "gemini: the extension installs"
+  run env HOME="$PH" gemini extensions list; assert_contains "$OUT" "xchg"
+  [ -f "$PH/.gemini/extensions/xchg/bin/xchg" ] && [ -f "$PH/.gemini/extensions/xchg/hooks/hooks.json" ] && ok "gemini: extension complete" || fail "gemini: extension incomplete"
+else ok "no gemini CLI: gemini install skipped"; fi
 
 t "bash 3.2 compatibility (static; the live run is tests/bash32.sh)"
 assert_eq "$(grep -c 'declare -A' "$X" || true)" 0 "no associative arrays"
@@ -221,9 +261,20 @@ git -C "$W2" pull -q
 printf -- '---\nfrom: carol/web\nto: alice\nkind: task\ndate: 2026-09-10T10:00:00Z\n---\n# Not for the api agent\n' > "$W2/people/alice/20260910-100000_carol_notmine.md"
 ( cd "$W2" && git add -A && git commit -qm notmine && git push -q )
 run in_api hook UserPromptSubmit "$X" inbox --brief; assert_contains "$OUT" "Not for the api agent"; ok "the hook shows a new message"
+# a hook gets JSON with additionalContext: the one form every supported harness adds to the model context
+assert_eq "$(jq -r .hookSpecificOutput.hookEventName <<< "$OUT")" UserPromptSubmit "hook output is valid JSON with the event name"
+assert_contains "$(jq -r .hookSpecificOutput.additionalContext <<< "$OUT")" $'new message (xchg inbox):\n'
 run in_api hook UserPromptSubmit "$X" inbox --brief; assert_eq "$OUT" "" "a repeated hook on the same stays silent (0 bytes)"
 run in_api hook SessionStart "$X" inbox --brief; assert_contains "$OUT" "in the inbox"; assert_contains "$OUT" "Not for the api agent"
 ok "session start shows what is open again"
+git -C "$W2" pull -q
+printf -- '---\nfrom: bob/api\nto: @api:alice\nkind: task\ndate: 2026-09-10T09:50:00Z\n---\n# Quote "this" and back\\slash\n' > "$W2/projects/api/alice/20260910-095000_bob_quote.md"
+( cd "$W2" && git add -A && git commit -qm quote && git push -q )
+run in_api hook BeforeAgent "$X" inbox --brief; assert_eq "$(jq -r .hookSpecificOutput.hookEventName <<< "$OUT")" BeforeAgent "the other prompt event name works the same"
+assert_contains "$(jq -r .hookSpecificOutput.additionalContext <<< "$OUT")" 'Quote "this" and back\slash'; ok "quotes and backslashes are escaped"
+run in_api hook BeforeAgent "$X" inbox --brief; assert_eq "$OUT" "" "and stays silent on a repeat (0 bytes)"
+run in_api hook SessionStart "$X" inbox --brief; assert_contains "$OUT" '"hookEventName":"SessionStart"'
+run in_api bash -c "'$X' inbox --brief < /dev/null"; assert_not_contains "$OUT" "hookSpecificOutput"; ok "without hook JSON the output is plain text"
 NM="$H/exchange/work/people/alice/20260910-100000_carol_notmine.md"
 run in_api "$X" mute; assert_eq "$RC" 2 "mute without a file is a usage error"
 run in_api "$X" mute "$NM"; assert_eq "$RC" 0 "mute"; assert_contains "$OUT" "muted for agent @api"

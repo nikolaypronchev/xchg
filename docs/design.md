@@ -14,9 +14,9 @@ who is a member of both hubs, with the explicit `forward` command.
 agent) are defined by the directory layout, so "who is this for" and "which agent will take it" are
 not worked out by heuristics: a session shows exactly its own addresses.
 
-**Hooks instead of polling.** An agent learns about messages from Claude Code hooks. When there is
+**Hooks instead of polling.** An agent learns about messages from its harness's hooks. When there is
 nothing new, the hook prints an empty string — zero bytes in the context and zero tokens. Polling on
-a timer (`/loop`, cron) would cost a model turn on every tick, so the client doesn't offer it and the
+a timer (a scheduled loop, cron) would cost a model turn on every tick, so the client doesn't offer it and the
 skill explicitly forbids it. When no human is around, `xchg wait` plays the same role: a process
 polls the hubs, not the model, and the agent wakes only for a real message.
 
@@ -29,8 +29,8 @@ their machine.
 where the agent reads it anyway; the hub gets an event with a link. Otherwise a second source of
 truth appears, one that has to be maintained and always lags behind.
 
-**The client is one bash script.** It has to work wherever Claude Code works, without installing
-anything: `bash`, `git`, `awk`, `sed`, coreutils. `python3` and `jq` are optional accelerators, both
+**The client is one bash script.** It has to work wherever a coding agent has a shell, without
+installing anything: `bash`, `git`, `awk`, `sed`, coreutils. `python3` and `jq` are optional accelerators, both
 with a fallback.
 
 ## What is not here

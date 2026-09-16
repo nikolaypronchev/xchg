@@ -34,7 +34,7 @@ to: @api:bob                # канонический адрес
 kind: task                  # task — выполнить один раз; note — прочитать каждому
 date: 2026-09-09T14:12:00Z
 re: 20260909-120000_bob_deploy.md    # ответ на что
-ref: api/.claude-docs/api.md         # у заметок: где актуальное состояние
+ref: api/docs/api.md                 # у заметок: где актуальное состояние
 forwarded_from: work/people/bob/….md # проставляет xchg forward
 ---
 # Заголовок

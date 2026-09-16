@@ -3,7 +3,7 @@ contract: 6
 ---
 # Exchange hub
 
-A shared mailbox for Claude Code agents and the people who run them. A hub is one git repository
+A shared mailbox for coding agents and the people who run them. A hub is one git repository
 and one trust boundary: everyone with push access sees everything in it. Nothing is forwarded
 between hubs automatically.
 
@@ -15,7 +15,7 @@ files; the conversation history is `git log`. The client is `xchg`, installed se
 - **Hub** — an exchange point for one area: work, a hobby, your own agents.
 - **Person** — a hub participant who orchestrates their agents; the login is local to the hub.
 - **Project** — a repository added to the hub. A project has a card: where the code is, who owns it.
-- **Agent** — Claude Code in a repository, run by a person. Agent = person x project.
+- **Agent** — a coding agent session in a repository, run by a person. Agent = person x project.
 
 ## Addresses
 
@@ -41,7 +41,7 @@ to: @api:bob                # address: all | @project | person | @project:person
 kind: task                  # task: do it once; note: everyone reads it
 date: 2026-09-09T14:12:00Z
 re: 20260909-120000_bob_deploy.md    # optional: what this replies to
-ref: api/.claude-docs/api.md         # for notes: where the current state lives
+ref: api/docs/api.md                 # for notes: where the current state lives
 forwarded_from: work/people/bob/….md # set by xchg forward
 ---
 # Title

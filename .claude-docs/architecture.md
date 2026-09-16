@@ -22,17 +22,29 @@ tags: [memory/repo, architecture]
 - **claim**: sync → проверка, что задача ещё на месте и это задача → `git mv` в `projects/<p>/<me>/` → push; при проигрыше гонки локальный коммит откатывается (`reset --hard @{u}`, только если он единственный) и печатается, кто успел.
 - **done**: `git mv` в `<адрес>/done/`.
 
-## Плагин Claude Code
+## Пакеты харнессов
 
-Репозиторий сам себе маркетплейс и плагин: `.claude-plugin/marketplace.json` (запись с `source: "./"`),
-`.claude-plugin/plugin.json` (без ключа `hooks`: стандартный `hooks/hooks.json` подхватывается сам), `hooks/hooks.json` (хуки зовут `"${CLAUDE_PLUGIN_ROOT}/bin/xchg"`),
-`commands/setup.md` (`/xchg:setup`). Каталог `bin/` плагина Claude Code сам добавляет в PATH,
-`skills/exchange` подхватывается автоматически.
+Один репозиторий — пакет для трёх харнессов; раскладку диктуют их ограничения (см. gotchas):
 
-Клиент понимает, что запущен из плагина (`PLUGIN_MODE`: `$XCHG_ROOT` внутри `~/.claude/plugins/`), и тогда
-не делает самообновление (этим занимается `/plugin update`), а `install` только создаёт конфиг:
-симлинки и хуки — дело плагина. `cmd_version` в установленном плагине берёт версию из манифеста,
-потому что git-клона там нет.
+| харнесс | пакет | манифест | хуки | как попадает клиент |
+|---|---|---|---|---|
+| Claude Code | `harness/claude-code/` | `harness/claude-code/.claude-plugin/plugin.json`; маркетплейс `.claude-plugin/marketplace.json` в корне → `./harness/claude-code` | `harness/claude-code/hooks/hooks.json` (подхватывается сам), `${CLAUDE_PLUGIN_ROOT}` | симлинки `bin`, `skills`, `hub`, `docs` → корень; при установке разворачиваются в файлы; `bin/` в PATH |
+| Codex CLI | корень репозитория | `.codex-plugin/plugin.json` с явным `hooks: ./harness/codex/hooks.json`; маркетплейс `.agents/plugins/marketplace.json` → `./` | `harness/codex/hooks.json`, `${PLUGIN_ROOT}` | копия корня; в PATH не попадает — путь говорит скилл |
+| Gemini CLI | корень репозитория | `gemini-extension.json` | `hooks/hooks.json` в корне (событие `BeforeAgent`, таймаут в мс), `${extensionPath}` | копия корня (вместе с `.git`); в PATH не попадает |
+
+Общее для всех: `bin/xchg`, скиллы `skills/exchange` и `skills/xchg-setup` (настройка), обёртки
+команды `/xchg:setup` — `harness/claude-code/commands/setup.md` и `commands/xchg/setup.toml` (Gemini).
+Версия одна во всех трёх манифестах (тест сверяет).
+
+Хуки всех трёх зовут `xchg inbox --brief`. Клиент читает `hook_event_name` из JSON на stdin
+(`SessionStart` → всё открытое, любое другое → только новое) и отвечает
+`{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}` (`hook_print`, `json_str`); без JSON
+на stdin — текстом. Нечего сказать — 0 байт.
+
+`PLUGIN_MODE`: `$XCHG_ROOT` внутри `~/.claude/plugins/`, `~/.codex/plugins/` или `~/.gemini/extensions/`.
+Тогда нет самообновления (обновляет харнесс), `install` только создаёт конфиг, `cmd_version` берёт
+версию из манифеста. Отдельная установка (`install`) настраивает каждый найденный харнесс по таблице
+`harness_info`: файл хуков, имена событий, единицы таймаута, каталог скиллов.
 
 ## Состояние на диске
 

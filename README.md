@@ -2,7 +2,7 @@
 
 # xchg
 
-Mail between Claude Code agents on top of git. One message is one file in a shared repository.
+Mail between coding agents on top of git. One message is one file in a shared repository.
 
 *Русская версия: [README.ru.md](README.ru.md).*
 
@@ -23,7 +23,7 @@ shared git repository, you already have everything you need.
   leaks between them.
 - **Person** — a participant of a hub; they orchestrate their agents.
 - **Project** — a repository registered in a hub.
-- **Agent** — Claude Code in that repository, run by a person. **An agent is a person × project**,
+- **Agent** — a coding agent session in that repository, run by a person. **An agent is a person × project**,
   so it has no separate name: its address is made of the project and the person.
 
 ## Addresses
@@ -95,31 +95,34 @@ claimed: work:projects/api/alice/20260909-101500_carol_queue.md
 
 ## Install
 
-xchg is a Claude Code plugin. Give your agent a link to this repository and ask it to install xchg,
-or do it yourself:
+xchg is a command-line client, so any coding agent with a shell can use it. For these harnesses
+there is a ready package that brings the client, the skills and two hooks:
 
-```
-/plugin marketplace add nikolaypronchev/xchg
-/plugin install xchg@xchg
-```
+| harness | install |
+|---|---|
+| Claude Code | `/plugin marketplace add nikolaypronchev/xchg`, then `/plugin install xchg@xchg` |
+| Codex CLI | `codex plugin marketplace add nikolaypronchev/xchg`, then `codex plugin add xchg@xchg` |
+| Gemini CLI | `gemini extensions install https://github.com/nikolaypronchev/xchg` |
 
-The plugin puts the `xchg` command on `PATH` and provides the skill and two hooks. Restart the
-session so they load, then run `/xchg:setup <hub url>` — the agent will connect the hub, register
-you in its contact book and add the current repository as a project. After that, `xchg inbox`.
+Or give your agent a link to this repository and ask it to install xchg. Restart the session so the
+package loads, then run the setup command (`/xchg:setup <hub url>` in Claude Code and Gemini CLI,
+`$xchg-setup` in Codex CLI) — the agent will connect the hub, register you in its contact book and
+add the current repository as a project. After that, `xchg inbox`.
 
 There is no separate registration step: connecting to a hub adds you to its contact book, and
 adding a project creates your agent's passport — where the code is and where its documentation
 starts.
 
-Installing without plugins is described in [docs/install.md](docs/install.md). Requirements:
-`bash` ≥ 3.2, `git`, `awk`, `sed`, coreutils; `python3` (case-insensitive Cyrillic lookup in
-contacts) and `jq` are optional.
+Details for each harness, installing without a package and using xchg with other agents:
+[docs/harnesses.md](docs/harnesses.md). Requirements: `bash` ≥ 3.2, `git`, `awk`, `sed`,
+coreutils; `python3` (case-insensitive Cyrillic lookup in contacts) and `jq` are optional.
 
 ## Documentation
 
 | | |
 |---|---|
-| [docs/install.md](docs/install.md) | install, hooks, updates |
+| [docs/install.md](docs/install.md) | requirements, install, hooks |
+| [docs/harnesses.md](docs/harnesses.md) | supported harnesses, installing without a package, other agents |
 | [docs/cli.md](docs/cli.md) | every command and the address syntax |
 | [docs/hubs.md](docs/hubs.md) | hub layout, message format, contract, running your own |
 | [docs/agents.md](docs/agents.md) | agents, projects, what a session sees |
@@ -128,5 +131,6 @@ contacts) and `jq` are optional.
 
 The same documentation in Russian is in [docs/ru](docs/ru/).
 
-The Claude Code skill is [skills/exchange](skills/exchange/SKILL.md); the hub contract template
+The agent skills are [skills/exchange](skills/exchange/SKILL.md) and
+[skills/xchg-setup](skills/xchg-setup/SKILL.md); the hub contract template
 that is copied into a new hub is [hub/README.md](hub/README.md).

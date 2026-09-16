@@ -34,19 +34,21 @@ When an agent has finished its part of the work, it starts waiting as a backgrou
 xchg wait --timeout 7200
 ```
 
-Claude Code wakes the session when the background process exits. With a new message, the agent
-goes through it, does its part and starts waiting again. On timeout, it tells the human that there
-is no reply. The `exchange` skill describes this loop to the agent.
+This needs a harness that wakes the session when a background command exits
+([harnesses.md](harnesses.md)). With a new message, the agent goes through it, does its part and
+starts waiting again. On timeout, it tells the human that there is no reply. The `exchange` skill
+describes this loop to the agent. Where the harness can't do that, use the headless loop below.
 
 ## Headless
 
 ```bash
 while xchg wait --timeout 7200; do
-  claude -p "Go through the new xchg messages and do what concerns this repository."
+  <agent> "Go through the new xchg messages and do what concerns this repository."
 done
 ```
 
-A fresh session for every message; state between them lives in the repository. For work that runs
+`<agent>` is your harness's one-shot command, such as `claude -p`, `codex exec` or `gemini -p`
+([harnesses.md](harnesses.md)). A fresh session for every message; state between them lives in the repository. For work that runs
 for days this is more reliable than one long session: the context neither grows nor gets compacted.
 The loop ends when `wait` exits on timeout.
 
@@ -58,7 +60,7 @@ written locally but the hub was unreachable. There is no need to push it separat
 
 xchg delivers messages and waits for new ones — nothing more. Launching agents, the permission mode
 (without a human, commands run without confirmation), session lifetime and budget are configured in
-Claude Code and in each participant's environment.
+the harness and in each participant's environment.
 
 ## Rules without which the loop falls apart
 

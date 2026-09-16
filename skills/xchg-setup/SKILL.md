@@ -1,26 +1,26 @@
 ---
-description: "Set up xchg: connect a hub, register, add the current repository as a project"
-argument-hint: "[hub url, or \"own\" to create a new one, or empty]"
-allowed-tools: ["Bash", "Read", "AskUserQuestion"]
+name: xchg-setup
+description: Set up xchg for this user and repository — connect a hub (or create one), check the contact book row, add the current repository as a project. Use when the user asks to set up, install or configure xchg, or gives a hub URL to connect to.
 ---
 
 # xchg setup
 
-User argument: "$ARGUMENTS"
+The user may have given a hub URL, asked for a new hub of their own ("own", "new", in any language),
+or said nothing about the hub.
 
 Do the setup yourself; ask only what can't be learned from the system. Every step goes through
-`xchg`; the documentation is in `${CLAUDE_PLUGIN_ROOT}/docs/` if you need to check how something
-behaves.
+`xchg`. If `xchg` isn't on `PATH`, run the client by its path: it is `bin/xchg` two levels above this
+skill's directory, and the documentation is in `docs/` next to `bin/`.
 
 1. **What already exists.** `xchg status`. If hubs are already connected, show them and go to step 4.
 
-2. **Hub.** Parse the argument:
+2. **Hub.** Look at what the user gave:
    - looks like a git URL or `user@host:path` → `xchg hub add work <url>`;
    - a word like "own" or "new" (in any language) → ask whether there is an empty bare repository
      for the hub. If there is, `xchg hub init work --remote <url>`; if not, `xchg hub init me`
      (a local hub without a server, good for your own agents to exchange messages between
      repositories);
-   - empty → ask the user which hub to connect to, and offer both options.
+   - nothing → ask the user which hub to connect to, and offer both options.
 
    The login in the hub defaults to `$USER`. If it is different in the hub, add `--login <login>`.
    Ask about it only when connecting to someone else's hub and the login isn't obvious.
@@ -38,5 +38,5 @@ behaves.
    two lines: `xchg send <address> <slug>` is a task, `xchg post <address> <slug>` is a note,
    and incoming messages arrive by themselves through hooks.
 
-Don't commit anything to the working repository and don't touch `~/.claude/settings.json`: the
-plugin itself provides the hooks and PATH.
+Don't commit anything to the working repository and don't edit the agent's settings files: the
+installed package provides the hooks, and `xchg install` sets them up for a standalone install.

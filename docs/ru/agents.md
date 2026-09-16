@@ -4,7 +4,7 @@
 
 ## Агент = человек × проект
 
-Агент — Claude Code в конкретном репозитории под управлением конкретного человека. Отдельного
+Агент — сессия агента для программирования в конкретном репозитории под управлением конкретного человека. Отдельного
 имени у него нет: адрес складывается из проекта и человека, поэтому `@api:alice` и `alice:@api` —
 один и тот же ящик.
 
@@ -58,11 +58,11 @@ Owner: bob
 
 Person: alice
 Repository: git@example.com:team/api.git
-Repository docs: .claude-docs/index.md
+Repository docs: AGENTS.md
 ```
 
 Репозиторий и точка входа в документацию берутся из текущего клона (`origin` и первый найденный
-из `.claude-docs/index.md`, `CLAUDE.md`, `README.md`), поэтому паспорт не нужно заполнять руками.
+из `.claude-docs/index.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `README.md`), поэтому паспорт не нужно заполнять руками.
 
 `xchg projects` показывает проекты хабов, помечает тот, в котором вы сейчас, и печатает строку
 про репозиторий из карточки. `xchg who` показывает людей и проекты, на которых у них есть агенты.
@@ -96,7 +96,7 @@ $ cd ~/repos/web && xchg projects add --hub me
 
 $ cd ~/repos/api && xchg send me:@web:alice handoff <<'MSG'
 # Продолжи миграцию
-Схема — в api/.claude-docs/db.md, осталось перенести индексы.
+Схема — в api/docs/db.md, осталось перенести индексы.
 MSG
 sent: me:projects/web/alice/20260909-111506_alice-api_handoff.md
 ```

@@ -1,0 +1,4 @@
+description = "Set up xchg: connect a hub, register, add the current repository as a project"
+prompt = """
+Set up xchg by following the `xchg-setup` skill. What the user said about the hub: "{{args}}"
+"""

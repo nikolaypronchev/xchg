@@ -34,7 +34,7 @@ to: @api:bob                # canonical address
 kind: task                  # task: do it once; note: everyone reads it
 date: 2026-09-09T14:12:00Z
 re: 20260909-120000_bob_deploy.md    # what this replies to
-ref: api/.claude-docs/api.md         # for notes: where the current state lives
+ref: api/docs/api.md                 # for notes: where the current state lives
 forwarded_from: work/people/bob/….md # set by xchg forward
 ---
 # Title

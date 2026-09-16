@@ -4,7 +4,7 @@
 
 ## Agent = person × project
 
-An agent is Claude Code in a specific repository, run by a specific person. It has no separate
+An agent is a coding agent session in a specific repository, run by a specific person. It has no separate
 name: its address is made of the project and the person, so `@api:alice` and `alice:@api` are one
 and the same mailbox.
 
@@ -60,11 +60,11 @@ Owner: bob
 
 Person: alice
 Repository: git@example.com:team/api.git
-Repository docs: .claude-docs/index.md
+Repository docs: AGENTS.md
 ```
 
 The repository and the documentation entry point come from the current clone (`origin` and the first
-one found of `.claude-docs/index.md`, `CLAUDE.md`, `README.md`), so the passport doesn't need to be
+one found of `.claude-docs/index.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `README.md`), so the passport doesn't need to be
 filled in by hand.
 
 `xchg projects` shows the hubs' projects, marks the one you are in and prints the repository line
@@ -99,7 +99,7 @@ $ cd ~/repos/web && xchg projects add --hub me
 
 $ cd ~/repos/api && xchg send me:@web:alice handoff <<'MSG'
 # Continue the migration
-The schema is in api/.claude-docs/db.md; what's left is moving the indexes.
+The schema is in api/docs/db.md; what's left is moving the indexes.
 MSG
 sent: me:projects/web/alice/20260909-111506_alice-api_handoff.md
 ```

@@ -1,7 +1,7 @@
 # CLAUDE.md — xchg
 
-Клиент обмена сообщениями между агентами Claude Code через git-хабы. Один bash-скрипт `bin/xchg`;
-репозиторий заодно является плагином Claude Code и маркетплейсом для него.
+Клиент обмена сообщениями между агентами для программирования через git-хабы. Один bash-скрипт `bin/xchg`;
+репозиторий заодно — пакет для харнессов Claude Code, Codex CLI и Gemini CLI (раскладка — [.claude-docs/architecture.md](.claude-docs/architecture.md)).
 Пользовательская документация — [`docs/`](docs/), внутренняя — [`.claude-docs/`](.claude-docs/index.md).
 
 ## Documentation index
@@ -14,7 +14,7 @@
 - `tests/run.sh [-v]` — e2e в песочнице (HOME подменяется, хабы — локальные bare). Обязателен перед коммитом в `bin/xchg`.
 - `tests/bash32.sh [-v]` — тот же прогон под bash 3.2 в docker. Обязателен перед коммитом в `bin/xchg`.
 - `bash -n bin/xchg` — синтаксис.
-- `claude plugin validate .` — манифесты плагина и маркетплейса.
+- `claude plugin validate harness/claude-code` — манифест плагина Claude Code. Настоящую установку в песочный HOME `tests/run.sh` делает для каждого харнесса, чей CLI есть в PATH (`claude`, `codex`, `gemini`).
 - `XCHG_NO_SELFUPDATE=1 bin/xchg <cmd>` — прогнать клиент из репозитория против настоящих хабов.
 
 ## Boundaries
@@ -34,4 +34,4 @@
 
 ## Workflow
 - Ветка `main`, коммиты однострочные.
-- Релиз: поднял `version` в `.claude-plugin/plugin.json` — на этот же коммит аннотированный тег `v<версия>` (`git tag -a v0.1.11 -m v0.1.11`) и `git push --tags`. Bump версии и тег — один коммит; по тегу версия клиента закрепляется в чужих сборках.
+- Релиз: поднял `version` (одинаково в `harness/claude-code/.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `gemini-extension.json`) — на этот же коммит аннотированный тег `v<версия>` (`git tag -a v0.1.11 -m v0.1.11`) и `git push --tags`. Bump версии и тег — один коммит; по тегу версия клиента закрепляется в чужих сборках.
