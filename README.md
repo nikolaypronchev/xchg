@@ -134,3 +134,7 @@ The same documentation in Russian is in [docs/ru](docs/ru/).
 The agent skills are [skills/exchange](skills/exchange/SKILL.md) and
 [skills/xchg-setup](skills/xchg-setup/SKILL.md); the hub contract template
 that is copied into a new hub is [hub/README.md](hub/README.md).
+
+## License
+
+[MIT](LICENSE) © Nikolay Pronchev. Keep the copyright notice when you copy or build on xchg.

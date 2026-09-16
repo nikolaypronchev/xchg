@@ -133,3 +133,7 @@ xchg — клиент командной строки, поэтому им мо�
 Скиллы для агентов — [skills/exchange](skills/exchange/SKILL.md) и
 [skills/xchg-setup](skills/xchg-setup/SKILL.md) (на английском), эталон контракта хаба (на английском) —
 [hub/README.md](hub/README.md).
+
+## Лицензия
+
+[MIT](LICENSE) © Nikolay Pronchev. При копировании и доработке xchg сохраняйте уведомление об авторстве.
