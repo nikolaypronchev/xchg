@@ -53,6 +53,8 @@ assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "alice:***@example.i
 CONFF="$H/.config/xchg/xchg.conf"; cp "$CONFF" "$SB/conf.bak"
 sed -i.bak 's#^\(remote *= *\).*bare-work$#\1https://alice:SECRET@example.invalid/git/work.git#' "$CONFF"
 run "$X" hubs; assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "alice:***@example.invalid"
+run "$X" hub add tok3 "https://SECRET@example.invalid/git/tok3.git" --login alice; assert_eq "$RC" 1 "clone with a token without a login fails"
+assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "https://***@example.invalid"
 cp "$SB/conf.bak" "$CONFF"; rm -rf "$H/exchange/tok2"
 
 t "harness packages"

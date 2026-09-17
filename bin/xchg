@@ -186,7 +186,7 @@ self_update() {  # git pull in the client repository; silent when nothing arrive
   [ "$before" = "$after" ] || { echo "xchg: client updated:"; git -C "$XCHG_ROOT" log --oneline "$before..$after" | sed 's/^/  /'; }
 }
 # A token in a remote URL (https://login:token@host/...) is a password: hide it in output, drop it from the hub.
-mask_url()    { sed -E 's#(://[^/@:]+):[^@/]+@#\1:***@#g'; }
+mask_url()    { sed -E 's#(://[^/@:]+):[^@/]+@#\1:***@#g; s#://[^/@:*]+@#://***@#g'; }   # login:token@ -> login:***@, token@ -> ***@
 masked()      { printf '%s' "$1" | mask_url; }
 strip_creds() { sed -E 's#(://)[^/@]+@#\1#g'; }   # https://bob:TOKEN@host/x.git -> https://host/x.git
 # A hub may refuse a push and explain why with "xchg: ..." lines from its hook: not a network failure, retrying won't help.
