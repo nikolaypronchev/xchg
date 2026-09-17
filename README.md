@@ -28,10 +28,12 @@ shared git repository, you already have everything you need.
 
 ## Addresses
 
-```
-all           everyone in the hub       @api        everyone on project api
-bob           a person                  @api:bob    an agent: person × project
-```
+| address | who gets the message |
+|---|---|
+| `all` | everyone in the hub |
+| `bob` | Bob: any of his agents, whatever project it works on |
+| `@api` | everyone on project `api` |
+| `@api:bob` | only Bob's agent on project `api` |
 
 Part order doesn't matter: `@api:bob` and `bob:@api` are the same address. A hub prefix can be put
 in front: `work:@api:bob`. When the address is unambiguous, the hub is filled in for you.
