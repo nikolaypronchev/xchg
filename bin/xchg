@@ -156,7 +156,7 @@ hub_sync() {  # <hub>; stdout: notices for the agent
     fi
   else
     local u="$d/.git/xchg-unavail" last=0; [ -f "$u" ] && last=$(cat "$u")
-    if [ "$BRIEF" = 0 ] || [ $((now - last)) -ge 3600 ]; then echo "hub $h is unreachable ($(hub_remote "$h" | sed 's/^$/origin/'))"; echo "$now" > "$u"; fi
+    if [ "$BRIEF" = 0 ] || [ $((now - last)) -ge 3600 ]; then echo "hub $h is unreachable ($(hub_remote "$h" | sed 's/^$/origin/' | mask_url))"; echo "$now" > "$u"; fi
   fi
   return 0
 }
@@ -185,6 +185,10 @@ self_update() {  # git pull in the client repository; silent when nothing arrive
   echo "$now" > "$stamp"; after=$(git -C "$XCHG_ROOT" rev-parse HEAD)
   [ "$before" = "$after" ] || { echo "xchg: client updated:"; git -C "$XCHG_ROOT" log --oneline "$before..$after" | sed 's/^/  /'; }
 }
+# A token in a remote URL (https://login:token@host/...) is a password: hide it in output, drop it from the hub.
+mask_url()    { sed -E 's#(://[^/@:]+):[^@/]+@#\1:***@#g'; }
+masked()      { printf '%s' "$1" | mask_url; }
+strip_creds() { sed -E 's#(://)[^/@]+@#\1#g'; }   # https://bob:TOKEN@host/x.git -> https://host/x.git
 # A hub may refuse a push and explain why with "xchg: ..." lines from its hook: not a network failure, retrying won't help.
 hub_refusal() { awk '{gsub(/\033\[K/,"")} sub(/^remote: xchg: */,"") {sub(/[ \t\r]+$/,""); print}'; }
 hub_push() {  # <hub> <commit message>
@@ -269,7 +273,7 @@ agent_passport() {  # <hub> <project>: agent passport = person x project
   local h="$1" p="$2"; local d="$(hub_path "$h")" me f repo docs
   me=$(hub_login "$h"); f="$d/projects/$p/$me/README.md"
   [ -f "$f" ] && return 0
-  repo=$(git remote get-url origin 2>/dev/null || true)
+  repo=$(git remote get-url origin 2>/dev/null | strip_creds || true)
   for docs in .claude-docs/index.md CLAUDE.md AGENTS.md GEMINI.md README.md; do [ -f "$docs" ] && break || docs=""; done
   mkdir -p "$(dirname "$f")"
   { printf '# %s on project %s\n\n' "$me" "$p"
@@ -823,6 +827,7 @@ cmd_project_add() {
   sync_hubs "$h"; check_contract "$h"
   local d="$(hub_path "$h")" pd="projects/$name"
   [ -n "$repo" ] || repo=$(git remote get-url origin 2>/dev/null || true)
+  repo=$(printf '%s' "$repo" | strip_creds)   # the card says where the code is, never how to log in
   if [ -d "$d/$pd" ]; then echo "project $name already exists in hub $h"
   else
     mkdir -p "$d/$pd"; [ -n "$owner" ] || owner=$(hub_login "$h")
@@ -840,7 +845,7 @@ cmd_hubs() {
   printf '%-8s %-8s %-30s %-9s %s\n' hub login path contract remote
   for h in ${HUBS[@]+"${HUBS[@]}"}; do c=$(hub_contract "$h")
     r=$(hub_remote "$h"); [ -n "$r" ] || r=$(git -C "$(hub_path "$h")" remote get-url origin 2>/dev/null || echo '(local)')
-    printf '%-8s %-8s %-30s %-9s %s\n' "$h$([ "$h" = "$CFG_DEFAULT" ] && echo '*')" "$(hub_login "$h")" "$(hub_path "$h")" "${c:-none}" "$r"; done
+    printf '%-8s %-8s %-30s %-9s %s\n' "$h$([ "$h" = "$CFG_DEFAULT" ] && echo '*')" "$(hub_login "$h")" "$(hub_path "$h")" "${c:-none}" "$(masked "$r")"; done
 }
 init_hub_repo() {  # <path> <login>
   local p="$1" login="$2"; mkdir -p "$p"; git -C "$p" init -q
@@ -866,12 +871,12 @@ cmd_hub() {
       [ -n "$login" ] || login="${USER:-$(id -un)}"
       init_hub_repo "$path" "$login"
       if [ -n "$remote" ]; then git -C "$path" remote add origin "$remote"
-        git -C "$path" push -q -u origin HEAD || die "hub created at $path, but push to $remote failed (create an empty bare repository and retry: git -C $path push -u origin HEAD)"; fi
+        git -C "$path" push -q -u origin HEAD || die "hub created at $path, but push to $(masked "$remote") failed (create an empty bare repository and retry: git -C $path push -u origin HEAD)"; fi
       conf_add_hub "$name" "$remote" "$path" "$login"
       hub_new "$name" "$path" "$remote" "$login"
       [ -n "$CFG_DEFAULT" ] || conf_set_global default "$name"
       register_me "$name"
-      echo "hub $name created: $path${remote:+ -> $remote}. Invite the others: xchg hub add $name ${remote:-<url>}";;
+      echo "hub $name created: $path${remote:+ -> $(masked "$remote")}. Invite the others: xchg hub add $name $(masked "${remote:-<url>}")";;
     add)
       local name="${1:-}" remote="${2:-}" login="" path=""; shift 2 2>/dev/null || udie "hub add <name> <remote> [--login L] [--path P]"
       while [ $# -gt 0 ]; do case "$1" in --login) login="$2"; shift 2;; --path) path=$(expand_tilde "$2"); shift 2;; *) udie "hub add: unknown flag $1";; esac; done
@@ -879,19 +884,19 @@ cmd_hub() {
       ensure_conf >/dev/null; is_hub "$name" && die "hub '$name' already exists (xchg hubs)"
       [ -n "$path" ] || path="$HOME/exchange/$name"
       if [ -d "$path/.git" ]; then [ "$(git -C "$path" remote get-url origin 2>/dev/null)" = "$remote" ] || die "$path already holds a different clone"; echo "clone already exists: $path"
-      else git clone -q "$remote" "$path" || die "clone of $remote failed"; fi
+      else git clone -q "$remote" "$path" || die "clone of $(masked "$remote") failed"; fi
       conf_add_hub "$name" "$remote" "$path" "$login"
       hub_new "$name" "$path" "$remote" "$login"
       [ -n "$CFG_DEFAULT" ] || conf_set_global default "$name"
-      echo "hub $name connected: $path <- $remote${login:+ (login $login)}"
+      echo "hub $name connected: $path <- $(masked "$remote")${login:+ (login $login)}"
       register_me "$name";;
     rm) local name="${1:-}"; [ -n "$name" ] || udie "hub rm <name>"; require_hubs; is_hub "$name" || die "no hub '$name'"
       conf_rm_hub "$name"; [ "$CFG_DEFAULT" = "$name" ] && conf_set_global default ""
       echo "hub $name removed from the registry; the clone at $(hub_path "$name") is left in place";;
     remote) local name="${1:-}" url="${2:-}"; [ -n "$url" ] || udie "hub remote <name> <url>"; require_hubs; is_hub "$name" || die "no hub '$name'"
       local d="$(hub_path "$name")"; if hub_has_remote "$name"; then git -C "$d" remote set-url origin "$url"; else git -C "$d" remote add origin "$url"; fi
-      git -C "$d" push -q -u origin HEAD || die "push to $url failed (the remote is set, retry: git -C $d push -u origin HEAD)"
-      conf_set_hub "$name" remote "$url"; echo "hub $name now syncs with $url";;
+      git -C "$d" push -q -u origin HEAD || die "push to $(masked "$url") failed (the remote is set, retry: git -C $d push -u origin HEAD)"
+      conf_set_hub "$name" remote "$url"; echo "hub $name now syncs with $(masked "$url")";;
     *) udie "hub init <name> [--remote URL] | hub add <name> <remote> [--login L] | hub rm <name> | hub remote <name> <url>";;
   esac
 }

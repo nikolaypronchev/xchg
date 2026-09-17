@@ -92,6 +92,12 @@ xchg hub add work user@server:/srv/exchange.git --login theirname
 cd ~/repos/api && xchg projects add   # присоединиться к существующему проекту
 ```
 
+Хостинг, который принимает токен вместо пароля, берёт его прямо из URL:
+`xchg hub add work https://bob:TOKEN@host/git/work.git --login bob`. Токен хранится в `.git/config`
+клона и в `xchg.conf`; в выводе `xchg hubs`, в сообщениях «хаб недоступен» и в ошибках он
+показывается как `bob:***@host`. Адрес репозитория, который `projects add` пишет в хаб (карточка
+проекта и паспорт агента), хранится вовсе без учётных данных: `https://host/team/api.git`.
+
 Отдельно регистрироваться не нужно: при подключении к хабу клиент дописывает вас в `contacts.md`
 (имя и контакт берутся из `git config user.name` и `user.email`) и заводит `people/<login>/`,
 а `xchg projects add` создаёт паспорт агента. Поправить свою строку — `xchg contact --name «…»

@@ -94,6 +94,13 @@ xchg hub add work user@server:/srv/exchange.git --login theirname
 cd ~/repos/api && xchg projects add   # join an existing project
 ```
 
+A hosting that takes a token instead of a password accepts it right in the URL:
+`xchg hub add work https://bob:TOKEN@host/git/work.git --login bob`. The token stays in the clone's
+`.git/config` and in `xchg.conf`; in the output of `xchg hubs`, in "hub is unreachable" messages and in
+errors it is shown as `bob:***@host`. The repository address that `projects add` writes into the hub
+(the project card and the agent passport) is stored without credentials at all:
+`https://host/team/api.git`.
+
 There is no separate registration: on connecting to a hub the client adds you to `contacts.md`
 (name and contact come from `git config user.name` and `user.email`) and creates `people/<login>/`,
 and `xchg projects add` creates the agent passport. To edit your row: `xchg contact --name '...'

@@ -45,6 +45,16 @@ git config --global init.defaultBranch main
 assert_contains "$(cat "$H/exchange/work/README.md")" "contract: 6"
 run "$X" hubs; assert_contains "$OUT" "work*"; assert_contains "$OUT" "alice"
 
+t "a token in the remote URL stays out of the output"
+run "$X" hub add tok "https://alice:SECRET@example.invalid/git/tok.git" --login alice; assert_eq "$RC" 1 "clone of an unreachable remote fails"
+assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "alice:***@example.invalid"
+run "$X" hub init tok2 --remote "https://alice:SECRET@example.invalid/git/tok2.git" --login alice; assert_eq "$RC" 1 "push to an unreachable remote fails"
+assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "alice:***@example.invalid"
+CONFF="$H/.config/xchg/xchg.conf"; cp "$CONFF" "$SB/conf.bak"
+sed -i.bak 's#^\(remote *= *\).*bare-work$#\1https://alice:SECRET@example.invalid/git/work.git#' "$CONFF"
+run "$X" hubs; assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "alice:***@example.invalid"
+cp "$SB/conf.bak" "$CONFF"; rm -rf "$H/exchange/tok2"
+
 t "harness packages"
 VER=$(jq -r .version "$ROOT/gemini-extension.json")
 for m in harness/claude-code/.claude-plugin/plugin.json .codex-plugin/plugin.json; do
@@ -118,6 +128,14 @@ run in_api "$X" projects; assert_contains "$OUT" "api              here"; assert
 ( cd "$H/exchange/work" && mkdir -p projects/legacy && printf '# legacy\n\nРепозиторий: git@example.com:team/legacy.git\n' > projects/legacy/README.md \
   && git add -A && git commit -qm legacy && git push -q )
 run in_api "$X" projects; assert_contains "$OUT" "git@example.com:team/legacy.git"
+# a token in the origin URL must not land in the hub: the card and the passport only say where the code is
+mkdir -p "$SB/repos/sec"; git init -q "$SB/repos/sec"; git -C "$SB/repos/sec" remote add origin "https://alice:SECRET@example.invalid/team/sec.git"
+run bash -c "cd '$SB/repos/sec' && '$X' projects add sec"; assert_eq "$RC" 0 "projects add with a token in origin"
+SC="$H/exchange/work/projects/sec/README.md"; SP="$H/exchange/work/projects/sec/alice/README.md"
+assert_not_contains "$(cat "$SC")" "SECRET"; assert_not_contains "$(cat "$SC")" "alice:"; assert_contains "$(cat "$SC")" "Repository: https://example.invalid/team/sec.git"
+assert_not_contains "$(cat "$SP")" "SECRET"; assert_not_contains "$(cat "$SP")" "alice:"; assert_contains "$(cat "$SP")" "Repository: https://example.invalid/team/sec.git"
+run bash -c "cd '$SB/repos/sec' && '$X' projects add sec2 --repo https://bob:TOKEN@example.invalid/team/sec2.git"; assert_eq "$RC" 0 "projects add with a token in --repo"
+assert_not_contains "$(cat "$H/exchange/work/projects/sec2/README.md")" "TOKEN"; assert_contains "$(cat "$H/exchange/work/projects/sec2/README.md")" "Repository: https://example.invalid/team/sec2.git"
 
 t "address: part order doesn't matter, all levels"
 printf '| bob | Борис Петров | боря | bob@example.com |\n| carol | Кэрол | | carol@example.com |\n' >> "$H/exchange/work/contacts.md"
