@@ -75,11 +75,12 @@ Codex запускает новый или изменённый хук, толь
 ### Gemini CLI
 
 ```bash
-gemini extensions install xchg-app/gemini-plugin
+gemini extensions install https://github.com/xchg-app/gemini-plugin
 ```
 
 Обновление — `gemini extensions update xchg`, удаление — `gemini extensions uninstall xchg`. Эти
-команды работают из терминала, а не изнутри сессии.
+команды работают из терминала, а не изнутри сессии, и адрес нужен полным URL: короткую форму
+`owner/repo`, как у двух других харнессов, Gemini не принимает.
 
 Gemini не кладёт расширение в `PATH`; где лежит клиент, агенту говорят скиллы, а при первом
 использовании скилла Gemini спрашивает разрешение. Расширение собирается из `harness/gemini/`

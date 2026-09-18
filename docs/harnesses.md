@@ -74,11 +74,12 @@ session when a background command exits, so for work without a human use the hea
 ### Gemini CLI
 
 ```bash
-gemini extensions install xchg-app/gemini-plugin
+gemini extensions install https://github.com/xchg-app/gemini-plugin
 ```
 
 Update with `gemini extensions update xchg`, remove with `gemini extensions uninstall xchg`. The
-commands work from a terminal, not from inside a session.
+commands work from a terminal, not from inside a session, and the address has to be the full URL:
+the `owner/repo` shorthand of the other two harnesses is not accepted here.
 
 Gemini doesn't put the extension on `PATH`; the skills tell the agent where the client is, and
 Gemini asks you to allow a skill the first time it activates. The extension is built from

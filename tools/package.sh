@@ -25,7 +25,7 @@ codex plugin add xchg@xchg
 ```' ;;
   gemini) title="Gemini CLI extension"; manifest="gemini-extension.json"
     install='```bash
-gemini extensions install xchg-app/gemini-plugin
+gemini extensions install https://github.com/xchg-app/gemini-plugin
 ```' ;;
   *) usage ;;
 esac
