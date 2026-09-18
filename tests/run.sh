@@ -58,49 +58,66 @@ assert_not_contains "$OUT" "SECRET"; assert_contains "$OUT" "https://***@example
 cp "$SB/conf.bak" "$CONFF"; rm -rf "$H/exchange/tok2"
 
 t "harness packages"
-VER=$(jq -r .version "$ROOT/gemini-extension.json")
-for m in harness/claude-code/.claude-plugin/plugin.json .codex-plugin/plugin.json; do
-  assert_eq "$(jq -r .version "$ROOT/$m")" "$VER" "$m: same version as gemini-extension.json"
-done
-assert_eq "$(jq -r '.plugins[0].source' "$ROOT/.claude-plugin/marketplace.json")" "./harness/claude-code" "claude-code marketplace points to its package"
-assert_eq "$(jq -r '.plugins[0].source.path' "$ROOT/.agents/plugins/marketplace.json")" "./" "codex marketplace points to the root"
-for l in bin skills hub docs; do [ -e "$ROOT/harness/claude-code/$l/." ] && ok "claude-code package links $l" || fail "harness/claude-code/$l is broken"; done
-assert_not_contains "$(cat "$ROOT/harness/claude-code/.claude-plugin/plugin.json")" '"hooks"'
-ok "the claude-code manifest doesn't reference hooks/hooks.json: it loads by itself, a reference is a duplicate"
-# each harness gets its own hooks file: event names, the root variable and timeout units differ
-for hf in "claude-code harness/claude-code/hooks/hooks.json UserPromptSubmit" "codex harness/codex/hooks.json UserPromptSubmit" "gemini hooks/hooks.json BeforeAgent"; do
-  set -- $hf; name=$1; file=$2; prompt=$3
-  assert_eq "$(jq -r '.hooks | keys | sort | join(" ")' "$ROOT/$file")" "$(printf '%s\n' SessionStart "$prompt" | sort | tr '\n' ' ' | sed 's/ $//')" "$name: exactly the two events"
-  for ev in SessionStart "$prompt"; do
-    c=$(jq -r ".hooks.$ev[0].hooks[0].command" "$ROOT/$file" | sed "s|\${CLAUDE_PLUGIN_ROOT}|$ROOT|; s|\${PLUGIN_ROOT}|$ROOT|; s|\${extensionPath}|$ROOT|")
-    assert_contains "$c" "$ROOT/bin/xchg"
+# every package is built by tools/package.sh; the package repositories hold nothing else
+PKG="$SB/packages"
+VER=$(jq -r .version "$ROOT/harness/gemini/gemini-extension.json")
+for p in "claude-code .claude-plugin/plugin.json UserPromptSubmit" "codex .codex-plugin/plugin.json UserPromptSubmit" "gemini gemini-extension.json BeforeAgent"; do
+  set -- $p; name=$1; manifest=$2; prompt=$3
+  run "$ROOT/tools/package.sh" "$name" "$PKG/$name"; assert_eq "$RC" 0 "$name: the package builds"
+  assert_eq "$(jq -r .version "$PKG/$name/$manifest")" "$VER" "$name: same version as the others"
+  for f in bin/xchg skills/exchange/SKILL.md skills/xchg-setup/SKILL.md hub/README.md LICENSE README.md hooks/hooks.json; do
+    [ -f "$PKG/$name/$f" ] && [ ! -L "$PKG/$name/$f" ] && ok "$name: has $f as a real file" || fail "$name: $f is missing or a link"
   done
+  # each harness names its events, its root variable and its timeout unit differently
+  assert_eq "$(jq -r '.hooks | keys | sort | join(" ")' "$PKG/$name/hooks/hooks.json")" "$(printf '%s\n' SessionStart "$prompt" | sort | tr '\n' ' ' | sed 's/ $//')" "$name: exactly the two events"
+  for ev in SessionStart "$prompt"; do
+    c=$(jq -r ".hooks.$ev[0].hooks[0].command" "$PKG/$name/hooks/hooks.json" | sed "s|\${CLAUDE_PLUGIN_ROOT}|R|; s|\${PLUGIN_ROOT}|R|; s|\${extensionPath}|R|")
+    assert_contains "$c" "R/bin/xchg"
+  done
+  assert_contains "$(cat "$PKG/$name/README.md")" "generated"
 done
-[ "$(jq -r '.hooks' "$ROOT/.codex-plugin/plugin.json")" = "./harness/codex/hooks.json" ] && ok "codex uses its own hooks file, not the root one" || fail "codex hooks path"
-assert_contains "$(cat "$ROOT/harness/claude-code/commands/setup.md")" "xchg-setup"
-assert_contains "$(cat "$ROOT/commands/xchg/setup.toml")" "xchg-setup"
+assert_eq "$(jq -r .hooks.SessionStart[0].hooks[0].timeout "$PKG/gemini/hooks/hooks.json")" 30000 "gemini counts the timeout in milliseconds"
+assert_eq "$(jq -r '.plugins[0].source' "$PKG/claude-code/.claude-plugin/marketplace.json")" "./" "claude-code: the marketplace points at the package root"
+assert_eq "$(jq -r '.plugins[0].source.path' "$PKG/codex/.agents/plugins/marketplace.json")" "./" "codex: the marketplace points at the package root"
+assert_not_contains "$(cat "$PKG/claude-code/.claude-plugin/plugin.json")" '"hooks"'
+assert_not_contains "$(cat "$PKG/codex/.codex-plugin/plugin.json")" '"hooks"'
+ok "no manifest points at hooks/hooks.json: it is found by itself, a reference would be a duplicate"
+assert_contains "$(cat "$PKG/claude-code/commands/setup.md")" "xchg-setup"
+assert_contains "$(cat "$PKG/gemini/commands/xchg/setup.toml")" "xchg-setup"
+# nothing of a single harness may sit in the repository root: the next harness would collide with it
+for f in hooks commands gemini-extension.json .claude-plugin .codex-plugin .agents; do
+  [ -e "$ROOT/$f" ] && fail "the root holds $f, which belongs to one harness" || ok "the root is free of $f"
+done
+# the package repositories are built, never written by hand: publishing overwrites them whole
+BARE="$SB/xchg-gemini.git"; git init -q --bare "$BARE"
+run env XCHG_PACKAGE_REPO="$BARE" "$ROOT/tools/publish.sh" gemini "$VER"; assert_eq "$RC" 0 "the package is published"
+run git -C "$BARE" show "v$VER:gemini-extension.json"; assert_contains "$OUT" "\"version\": \"$VER\"" "the tag v$VER carries the package"
+run git -C "$BARE" show "v$VER:bin/xchg"; assert_contains "$OUT" "xchg"
+run env XCHG_PACKAGE_REPO="$BARE" "$ROOT/tools/publish.sh" gemini "$VER"; assert_contains "$OUT" "already published"
+run env XCHG_PACKAGE_REPO="$BARE" "$ROOT/tools/publish.sh" gemini 9.9.9; assert_eq "$RC" 1 "a version other than the one in the manifests is refused"
+run env XCHG_PACKAGE_REPO="https://user:SECRET@example.invalid/x.git" "$ROOT/tools/publish.sh" gemini "$VER"
+assert_eq "$RC" 1 "an unreachable package repository fails"; assert_not_contains "$OUT" "SECRET"
+
 if command -v claude >/dev/null 2>&1; then
-  run claude plugin validate "$ROOT/harness/claude-code"; assert_eq "$RC" 0 "claude plugin validate"
+  run claude plugin validate "$PKG/claude-code"; assert_eq "$RC" 0 "claude plugin validate"
   # validate doesn't catch load errors, so do a real install into a separate HOME
   PH="$SB/claude-home"; mkdir -p "$PH"
-  run env HOME="$PH" claude plugin marketplace add "$ROOT"; assert_eq "$RC" 0 "claude-code: the marketplace is added"
+  run env HOME="$PH" claude plugin marketplace add "$PKG/claude-code"; assert_eq "$RC" 0 "claude-code: the marketplace is added"
   run env HOME="$PH" claude plugin install xchg@xchg; assert_eq "$RC" 0 "claude-code: the plugin installs"
   run env HOME="$PH" claude plugin list; assert_contains "$OUT" "xchg@xchg"; assert_not_contains "$OUT" "failed to load"
-  CI=$(ls -d "$PH"/.claude/plugins/cache/xchg/xchg/*/ | head -1)
-  [ -f "$CI/bin/xchg" ] && [ -f "$CI/skills/exchange/SKILL.md" ] && [ -f "$CI/hub/README.md" ] && ok "claude-code: links became files in the cache" || fail "claude-code: package incomplete"
 else ok "no claude CLI: claude-code install skipped"; fi
 if command -v codex >/dev/null 2>&1; then
   PH="$SB/codex-home"; mkdir -p "$PH/.codex"
-  run env HOME="$PH" CODEX_HOME="$PH/.codex" codex plugin marketplace add "$ROOT"; assert_eq "$RC" 0 "codex: the marketplace is added"
+  run env HOME="$PH" CODEX_HOME="$PH/.codex" codex plugin marketplace add "$PKG/codex"; assert_eq "$RC" 0 "codex: the marketplace is added"
   run env HOME="$PH" CODEX_HOME="$PH/.codex" codex plugin add xchg@xchg; assert_eq "$RC" 0 "codex: the plugin installs"
   CI=$(ls -d "$PH"/.codex/plugins/cache/xchg/xchg/*/ | head -1)
-  [ -f "$CI/bin/xchg" ] && [ -f "$CI/harness/codex/hooks.json" ] && [ -f "$CI/skills/exchange/SKILL.md" ] && ok "codex: package complete" || fail "codex: package incomplete"
+  [ -f "$CI/bin/xchg" ] && [ -f "$CI/hooks/hooks.json" ] && [ -f "$CI/skills/exchange/SKILL.md" ] && ok "codex: the installed plugin is complete" || fail "codex: the installed plugin is incomplete"
 else ok "no codex CLI: codex install skipped"; fi
 if command -v gemini >/dev/null 2>&1; then
   PH="$SB/gemini-home"; mkdir -p "$PH"
-  run bash -c "yes y | HOME='$PH' gemini extensions install '$ROOT' --consent"; assert_eq "$RC" 0 "gemini: the extension installs"
+  run bash -c "yes y | HOME='$PH' gemini extensions install '$PKG/gemini' --consent"; assert_eq "$RC" 0 "gemini: the extension installs"
   run env HOME="$PH" gemini extensions list; assert_contains "$OUT" "xchg"
-  [ -f "$PH/.gemini/extensions/xchg/bin/xchg" ] && [ -f "$PH/.gemini/extensions/xchg/hooks/hooks.json" ] && ok "gemini: extension complete" || fail "gemini: extension incomplete"
+  [ -f "$PH/.gemini/extensions/xchg/bin/xchg" ] && [ -f "$PH/.gemini/extensions/xchg/hooks/hooks.json" ] && ok "gemini: the installed extension is complete" || fail "gemini: the installed extension is incomplete"
 else ok "no gemini CLI: gemini install skipped"; fi
 
 t "bash 3.2 compatibility (static; the live run is tests/bash32.sh)"

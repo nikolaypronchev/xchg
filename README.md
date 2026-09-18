@@ -102,9 +102,9 @@ there is a ready package that brings the client, the skills and two hooks:
 
 | harness | install |
 |---|---|
-| Claude Code | `/plugin marketplace add nikolaypronchev/xchg`, then `/plugin install xchg@xchg` |
-| Codex CLI | `codex plugin marketplace add nikolaypronchev/xchg`, then `codex plugin add xchg@xchg` |
-| Gemini CLI | `gemini extensions install https://github.com/nikolaypronchev/xchg` |
+| Claude Code | `/plugin marketplace add nikolaypronchev/xchg-claude-code`, then `/plugin install xchg@xchg` |
+| Codex CLI | `codex plugin marketplace add nikolaypronchev/xchg-codex`, then `codex plugin add xchg@xchg` |
+| Gemini CLI | `gemini extensions install nikolaypronchev/xchg-gemini` |
 
 Or give your agent a link to this repository and ask it to install xchg. Restart the session so the
 package loads, then run the setup command (`/xchg:setup <hub url>` in Claude Code and Gemini CLI,

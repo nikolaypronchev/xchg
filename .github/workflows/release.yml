@@ -1,0 +1,41 @@
+name: release
+
+# A release tag in this repository is the only source of a package release: it rebuilds each
+# harness package and overwrites its own repository, so the three always carry the same version.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'version to publish, without the leading v'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [claude-code, codex, gemini]
+    steps:
+      - uses: actions/checkout@v4
+      - name: version
+        id: v
+        run: echo "version=${{ inputs.version || github.ref_name }}" | sed 's/=v/=/' >> "$GITHUB_OUTPUT"
+      - name: the manifests agree with the tag
+        run: |
+          set -eu
+          for m in harness/claude-code/.claude-plugin/plugin.json harness/codex/.codex-plugin/plugin.json harness/gemini/gemini-extension.json; do
+            v=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$m" | head -1)
+            [ "$v" = "${{ steps.v.outputs.version }}" ] || { echo "$m says $v, the tag says ${{ steps.v.outputs.version }}"; exit 1; }
+          done
+      - name: publish ${{ matrix.harness }}
+        env:
+          XCHG_PACKAGE_REPO: https://x-access-token:${{ secrets.PACKAGE_REPOS_TOKEN }}@github.com/${{ github.repository_owner }}/xchg-${{ matrix.harness }}.git
+          GIT_AUTHOR_NAME: xchg release
+          GIT_AUTHOR_EMAIL: noreply@github.com
+        run: tools/publish.sh "${{ matrix.harness }}" "${{ steps.v.outputs.version }}"

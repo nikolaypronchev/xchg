@@ -104,9 +104,9 @@ xchg — клиент командной строки, поэтому им мо�
 
 | харнесс | установка |
 |---|---|
-| Claude Code | `/plugin marketplace add nikolaypronchev/xchg`, затем `/plugin install xchg@xchg` |
-| Codex CLI | `codex plugin marketplace add nikolaypronchev/xchg`, затем `codex plugin add xchg@xchg` |
-| Gemini CLI | `gemini extensions install https://github.com/nikolaypronchev/xchg` |
+| Claude Code | `/plugin marketplace add nikolaypronchev/xchg-claude-code`, затем `/plugin install xchg@xchg` |
+| Codex CLI | `codex plugin marketplace add nikolaypronchev/xchg-codex`, затем `codex plugin add xchg@xchg` |
+| Gemini CLI | `gemini extensions install nikolaypronchev/xchg-gemini` |
 
 Или дайте агенту ссылку на этот репозиторий и попросите поставить xchg. Перезапустите сессию, чтобы
 пакет загрузился, и выполните команду настройки (`/xchg:setup <url хаба>` в Claude Code и Gemini CLI,

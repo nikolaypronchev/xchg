@@ -25,7 +25,8 @@ xchg — клиент командной строки, поэтому им мо�
 | Codex CLI | плагин | `SessionStart`, `UserPromptSubmit` | да | `$xchg-setup` | не документировано |
 | Gemini CLI | расширение | `SessionStart`, `BeforeAgent` | да | `/xchg:setup` | не документировано |
 
-Каждый пакет приносит одно и то же: клиент `xchg`, скилл `exchange` (как пользоваться почтой),
+У каждого пакета свой репозиторий, собранный из этого: `xchg-claude-code`, `xchg-codex`,
+`xchg-gemini`. Каждый пакет приносит одно и то же: клиент `xchg`, скилл `exchange` (как пользоваться почтой),
 скилл `xchg-setup` (подключить хаб, зарегистрироваться, завести репозиторий проектом) и два хука.
 Хуки запускают `xchg inbox --brief`: при старте сессии он показывает всё открытое, перед промптом —
 только новое, а когда нового нет, не печатает ничего, так что ни контекст, ни токены не тратятся.
@@ -39,15 +40,16 @@ xchg — клиент командной строки, поэтому им мо�
 ### Claude Code
 
 ```
-/plugin marketplace add nikolaypronchev/xchg
+/plugin marketplace add nikolaypronchev/xchg-claude-code
 /plugin install xchg@xchg
 ```
 
-То же из терминала: `claude plugin marketplace add nikolaypronchev/xchg` и
+То же из терминала: `claude plugin marketplace add nikolaypronchev/xchg-claude-code` и
 `claude plugin install xchg@xchg`. Обновление — `/plugin update xchg`, удаление —
 `/plugin uninstall xchg`.
 
-Плагин кладёт `xchg` в `PATH` агента. Пакет — `harness/claude-code/` в этом репозитории.
+Плагин кладёт `xchg` в `PATH` агента. Пакет собирается из `harness/claude-code/` этого
+репозитория и публикуется как `nikolaypronchev/xchg-claude-code`.
 
 Агент, закончив свою часть, запускает `xchg wait --timeout 7200` фоновой командой; Claude Code будит
 сессию, когда она завершается. Без интерфейса: `claude -p "<промпт>"`.
@@ -55,7 +57,7 @@ xchg — клиент командной строки, поэтому им мо�
 ### Codex CLI
 
 ```bash
-codex plugin marketplace add nikolaypronchev/xchg
+codex plugin marketplace add nikolaypronchev/xchg-codex
 codex plugin add xchg@xchg
 ```
 
@@ -63,8 +65,8 @@ codex plugin add xchg@xchg
 
 Codex запускает новый или изменённый хук, только когда вы ему доверились: после установки или
 обновления один раз откройте `/hooks` в сессии. Codex не кладёт пакет в `PATH`; где лежит клиент,
-агенту говорят скиллы. Пакет — корень репозитория с `.codex-plugin/plugin.json`, его хуки —
-`harness/codex/hooks.json`.
+агенту говорят скиллы. Пакет собирается из `harness/codex/` этого репозитория и публикуется
+как `nikolaypronchev/xchg-codex`.
 
 Без интерфейса: `codex exec "<промпт>"` (хукам там тоже нужно доверие). Будит ли Codex сессию, когда
 фоновая команда завершилась, не документировано, поэтому для работы без человека используйте
@@ -73,15 +75,15 @@ Codex запускает новый или изменённый хук, толь
 ### Gemini CLI
 
 ```bash
-gemini extensions install https://github.com/nikolaypronchev/xchg
+gemini extensions install nikolaypronchev/xchg-gemini
 ```
 
 Обновление — `gemini extensions update xchg`, удаление — `gemini extensions uninstall xchg`. Эти
 команды работают из терминала, а не изнутри сессии.
 
 Gemini не кладёт расширение в `PATH`; где лежит клиент, агенту говорят скиллы, а при первом
-использовании скилла Gemini спрашивает разрешение. Расширение — корень репозитория
-с `gemini-extension.json`, его хуки — `hooks/hooks.json`.
+использовании скилла Gemini спрашивает разрешение. Расширение собирается из `harness/gemini/`
+этого репозитория и публикуется как `nikolaypronchev/xchg-gemini`.
 
 Без интерфейса: `gemini -p "<промпт>"`. Будит ли Gemini сессию, когда фоновая команда завершилась,
 не документировано, поэтому для работы без человека используйте безголовый цикл.

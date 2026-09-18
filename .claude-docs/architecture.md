@@ -24,17 +24,26 @@ tags: [memory/repo, architecture]
 
 ## Пакеты харнессов
 
-Один репозиторий — пакет для трёх харнессов; раскладку диктуют их ограничения (см. gotchas):
+Корень репозитория не принадлежит ни одному харнессу: всё, что специфично, лежит в
+`harness/<имя>/`, а пользователь ставит пакет из отдельного репозитория, который собирается отсюда.
+Так сделано потому, что Gemini и Codex теряют симлинки при установке, а Gemini ставится только из
+корня репозитория (см. gotchas) — при общем репозитории корень доставался бы одному из харнессов.
 
-| харнесс | пакет | манифест | хуки | как попадает клиент |
-|---|---|---|---|---|
-| Claude Code | `harness/claude-code/` | `harness/claude-code/.claude-plugin/plugin.json`; маркетплейс `.claude-plugin/marketplace.json` в корне → `./harness/claude-code` | `harness/claude-code/hooks/hooks.json` (подхватывается сам), `${CLAUDE_PLUGIN_ROOT}` | симлинки `bin`, `skills`, `hub`, `docs` → корень; при установке разворачиваются в файлы; `bin/` в PATH |
-| Codex CLI | корень репозитория | `.codex-plugin/plugin.json` с явным `hooks: ./harness/codex/hooks.json`; маркетплейс `.agents/plugins/marketplace.json` → `./` | `harness/codex/hooks.json`, `${PLUGIN_ROOT}` | копия корня; в PATH не попадает — путь говорит скилл |
-| Gemini CLI | корень репозитория | `gemini-extension.json` | `hooks/hooks.json` в корне (событие `BeforeAgent`, таймаут в мс), `${extensionPath}` | копия корня (вместе с `.git`); в PATH не попадает |
+| харнесс | исходник пакета | репозиторий пакета | манифест | хуки | как попадает клиент |
+|---|---|---|---|---|---|
+| Claude Code | `harness/claude-code/` | `xchg-claude-code` | `.claude-plugin/plugin.json`; маркетплейс `.claude-plugin/marketplace.json` → `./` | `hooks/hooks.json` (подхватывается сам), `${CLAUDE_PLUGIN_ROOT}` | `bin/` в PATH |
+| Codex CLI | `harness/codex/` | `xchg-codex` | `.codex-plugin/plugin.json`; маркетплейс `.agents/plugins/marketplace.json` → `./` | `hooks/hooks.json` (стандартный путь), `${PLUGIN_ROOT}` | в PATH не попадает — путь говорит скилл |
+| Gemini CLI | `harness/gemini/` | `xchg-gemini` | `gemini-extension.json` | `hooks/hooks.json` (событие `BeforeAgent`, таймаут в мс), `${extensionPath}` | в PATH не попадает |
+
+Сборка — `tools/package.sh <харнесс> <каталог>`: кладёт файлы `harness/<имя>/` и настоящие копии
+`bin/`, `skills/`, `hub/`, `LICENSE` плюс сгенерированный README. Публикация —
+`tools/publish.sh <харнесс> <версия>`: перезаписывает репозиторий пакета целиком и ставит тот же тег;
+запускает её `.github/workflows/release.yml` по тегу `v*` (секрет `PACKAGE_REPOS_TOKEN`).
+Репозитории пакетов руками не правят — следующий релиз затрёт.
 
 Общее для всех: `bin/xchg`, скиллы `skills/exchange` и `skills/xchg-setup` (настройка), обёртки
-команды `/xchg:setup` — `harness/claude-code/commands/setup.md` и `commands/xchg/setup.toml` (Gemini).
-Версия одна во всех трёх манифестах (тест сверяет).
+команды `/xchg:setup` — `harness/claude-code/commands/setup.md` и
+`harness/gemini/commands/xchg/setup.toml`. Версия одна во всех трёх манифестах (тест сверяет).
 
 Хуки всех трёх зовут `xchg inbox --brief`. Клиент читает `hook_event_name` из JSON на stdin
 (`SessionStart` → всё открытое, любое другое → только новое) и отвечает

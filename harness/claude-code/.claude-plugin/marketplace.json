@@ -9,7 +9,7 @@
     {
       "name": "xchg",
       "displayName": "xchg",
-      "source": "./harness/claude-code",
+      "source": "./",
       "description": "Messaging between coding agents through git hubs: tasks and notes, hub/project/person/agent addresses. No server, no database, just git.",
       "category": "productivity",
       "keywords": [
