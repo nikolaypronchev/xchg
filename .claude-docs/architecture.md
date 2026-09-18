@@ -35,6 +35,13 @@ tags: [memory/repo, architecture]
 | Codex CLI | `harness/codex/` | `codex-plugin` | `.codex-plugin/plugin.json`; маркетплейс `.agents/plugins/marketplace.json` → `./` | `hooks/hooks.json` (стандартный путь), `${PLUGIN_ROOT}` | в PATH не попадает — путь говорит скилл |
 | Gemini CLI | `harness/gemini/` | `gemini-plugin` | `gemini-extension.json` | `hooks/hooks.json` (событие `BeforeAgent`, таймаут в мс), `${extensionPath}` | в PATH не попадает |
 
+Харнессы без пакета настраивает `cmd_install` по `harness_info`: `H_STYLE` — как писать хуки
+(`json` — файл настроек, правит jq; `yaml` — печатаем строки, YAML не трогаем; `scripts` — по
+исполняемому файлу на событие), `H_FORMAT` — в каком поле харнесс ждёт ответ (`hook_print`:
+`hookSpecificOutput.additionalContext`, `context` у Hermes, `contextModification` у Cline).
+Форму задаёт флаг `--hook-format`, «всё открытое» — событие `SessionStart`/`TaskStart`, флаг
+`--session` или `is_first_turn` в JSON на stdin (Hermes: ответ хука старта сессии игнорируется).
+
 Сборка — `tools/package.sh <харнесс> <каталог>`: кладёт файлы `harness/<имя>/` и настоящие копии
 `bin/`, `skills/`, `hub/`, `LICENSE` плюс сгенерированный README. Публикация —
 `tools/publish.sh <харнесс> <версия>`: перезаписывает репозиторий пакета целиком и ставит тот же тег;

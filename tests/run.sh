@@ -24,7 +24,7 @@ in_api() { ( cd "$SB/repos/api" && "$@" ); }
 in_web() { ( cd "$SB/repos/web" && "$@" ); }
 
 t "install and hub creation"
-mkdir -p "$H/.claude" "$H/.codex" "$H/.gemini"   # harnesses present: install configures each of them
+mkdir -p "$H/.claude" "$H/.codex" "$H/.gemini" "$H/.hermes" "$H/.cline"   # harnesses present: install configures each of them
 run "$X" install </dev/null; assert_eq "$RC" 0 "install rc"
 for hf in "claude-code .claude/settings.json UserPromptSubmit 30" "codex .codex/hooks.json UserPromptSubmit 30" "gemini .gemini/settings.json BeforeAgent 30000"; do
   set -- $hf
@@ -34,6 +34,20 @@ for hf in "claude-code .claude/settings.json UserPromptSubmit 30" "codex .codex/
   assert_eq "$(jq -r ".hooks.$3[0].hooks[0].timeout" "$H/$2")" "$4" "$1: timeout in the harness's unit"
 done
 [ -L "$H/.claude/skills/exchange" ] && [ -L "$H/.agents/skills/xchg-setup" ] && ok "skills linked" || fail "skills not linked"
+# a harness whose hooks are a file per event gets files; a YAML config is the user's to edit, so it only gets a snippet
+for ev in TaskStart UserPromptSubmit; do
+  f="$H/Documents/Cline/Rules/Hooks/$ev"
+  [ -x "$f" ] && ok "cline: hook $ev is an executable file" || fail "cline: no hook $ev"
+  assert_contains "$(cat "$f")" "--hook-format cline"
+done
+assert_contains "$(cat "$H/Documents/Cline/Rules/Hooks/TaskStart")" "--session" "cline: the task-start hook shows everything open"
+[ -L "$H/.cline/skills/exchange" ] && ok "cline: skill linked" || fail "cline: skill not linked"
+assert_contains "$OUT" "add to $H/.hermes/config.yaml"; assert_contains "$OUT" "pre_llm_call"
+assert_contains "$OUT" "--hook-format hermes"; ok "hermes: install prints the snippet instead of rewriting the config"
+[ -L "$H/.hermes/skills/exchange" ] && ok "hermes: skill linked" || fail "hermes: skill not linked"
+run "$X" status; assert_contains "$OUT" "cline: hooks TaskStart ok"; assert_contains "$OUT" "hermes: hook pre_llm_call MISSING"
+printf 'hooks:\n  pre_llm_call:\n    - command: "xchg inbox --brief --max-age 300 --hook-format hermes"\n' > "$H/.hermes/config.yaml"
+run "$X" status; assert_contains "$OUT" "hermes: hook pre_llm_call ok" "status reads the pasted snippet"
 run "$X" install </dev/null; assert_contains "$OUT" "hook BeforeAgent already present"; ok "install is idempotent"
 assert_eq "$(jq '.hooks.SessionStart | length' "$H/.claude/settings.json")" 1 "no duplicate hooks"
 run "$X" inbox --brief; assert_eq "$OUT" "" "no hubs: the hook stays silent (0 bytes)"
@@ -312,6 +326,14 @@ assert_contains "$(jq -r .hookSpecificOutput.additionalContext <<< "$OUT")" 'Quo
 run in_api hook BeforeAgent "$X" inbox --brief; assert_eq "$OUT" "" "and stays silent on a repeat (0 bytes)"
 run in_api hook SessionStart "$X" inbox --brief; assert_contains "$OUT" '"hookEventName":"SessionStart"'
 run in_api bash -c "'$X' inbox --brief < /dev/null"; assert_not_contains "$OUT" "hookSpecificOutput"; ok "without hook JSON the output is plain text"
+# other harnesses take the same text in a field of their own; the client is told which by --hook-format
+run in_api hook SessionStart "$X" inbox --brief --hook-format hermes
+assert_eq "$(jq -r .context <<< "$OUT" | head -1 | cut -c1-5)" "xchg:" "hermes gets the text in .context"
+assert_not_contains "$OUT" "hookSpecificOutput"
+run in_api bash -c "'$X' inbox --brief --session --hook-format cline < /dev/null"
+assert_contains "$(jq -r .contextModification <<< "$OUT")" "in the inbox" "cline gets it in .contextModification, and --session shows everything open"
+run in_api hook SessionStart "$X" inbox --brief --hook-format text; assert_not_contains "$OUT" "{"; ok "a harness without hook JSON takes plain text"
+run in_api hook SessionStart "$X" inbox --brief --hook-format nosuch; assert_eq "$RC" 1 "an unknown hook format is an error"
 NM="$H/exchange/work/people/alice/20260910-100000_carol_notmine.md"
 run in_api "$X" mute; assert_eq "$RC" 2 "mute without a file is a usage error"
 run in_api "$X" mute "$NM"; assert_eq "$RC" 0 "mute"; assert_contains "$OUT" "muted for agent @api"

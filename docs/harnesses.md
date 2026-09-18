@@ -17,7 +17,7 @@ agent has to do by hand:
 A plain chat without a shell (for example, a chat app whose code sandbox has no persistent disk,
 no keys and no network access to your hub) can't use xchg.
 
-## Supported
+## With a package
 
 | | package | hooks | skills | setup command | wake on background exit |
 |---|---|---|---|---|---|
@@ -25,7 +25,8 @@ no keys and no network access to your hub) can't use xchg.
 | Codex CLI | plugin | `SessionStart`, `UserPromptSubmit` | yes | `$xchg-setup` | not documented |
 | Gemini CLI | extension | `SessionStart`, `BeforeAgent` | yes | `/xchg:setup` | not documented |
 
-Each package lives in a repository of its own, built from this one: `claude-code-plugin`,
+Three harnesses have a ready package. Two more are set up by `xchg install`, and with the rest xchg
+works through a skill — see the sections below. Each package lives in a repository of its own, built from this one: `claude-code-plugin`,
 `codex-plugin`, `gemini-plugin`. Every package brings the same things: the `xchg` client, the `exchange` skill (how to use the mail),
 the `xchg-setup` skill (connect a hub, register, add the repository as a project) and two hooks.
 The hooks run `xchg inbox --brief`: at session start it shows everything open, before a prompt only
@@ -88,6 +89,42 @@ Gemini asks you to allow a skill the first time it activates. The extension is b
 Headless: `gemini -p "<prompt>"`. Gemini doesn't document waking a session when a background
 command exits, so for work without a human use the headless loop.
 
+## Set up by `xchg install`
+
+These have no package of their own, but they have hooks, so new mail still reaches the agent by
+itself. Install the client as described below and run `xchg install`: it links the skills and writes
+the hooks.
+
+| | hooks | events | skills are linked into |
+|---|---|---|---|
+| Hermes Agent | shell commands in `~/.hermes/config.yaml` | `pre_llm_call` | `~/.hermes/skills` |
+| Cline | an executable file per event | `TaskStart`, `UserPromptSubmit` | `~/.cline/skills` |
+
+**Hermes Agent.** A hook answers with `{"context": "…"}` and the text is appended to the user
+message. The session-start event exists but its answer is ignored, so the whole inbox is shown on
+the first turn of a session instead: the harness marks that turn itself. A YAML config is yours to
+edit, so `xchg install` doesn't rewrite it — it prints the lines to paste. A new hook command asks
+for your consent the first time it runs. The terminal can run in a container or a remote sandbox;
+there the client, its config and your ssh keys are absent, so use the local backend.
+
+**Cline.** Hooks are executable files named exactly after the event, and they answer with
+`{"contextModification": "…"}`. They run on macOS and Linux only. Where the global hooks live
+depends on the build — `xchg install` takes the directory that exists, and `xchg status` prints
+where it wrote them. This is the older of Cline's two hook mechanisms; the newer one is a plugin
+written in TypeScript, which xchg doesn't ship.
+
+Neither of the two has been checked in a live session by the author — the packaged three have. If
+something doesn't work, the report is welcome.
+
+## Only a skill
+
+Kilo Code and OpenClaw have no hooks that can add text to the agent's context without a plugin
+written in TypeScript, so the mail doesn't arrive by itself: the agent reads it when it runs
+`xchg inbox`. Both read skills in the standard form, and both look into `~/.agents/skills`, where
+`xchg install` links them (Kilo Code documents it for a project directory, `.agents/skills`;
+OpenClaw also reads `~/.openclaw/skills`). Put the client on `PATH`, link the skill, and tell the
+agent that the mail is checked with `xchg inbox`.
+
 ## Without a package
 
 ```bash
@@ -104,6 +141,8 @@ by its config directory:
 | Claude Code | `~/.claude` | `~/.claude/settings.json` | `~/.claude/skills` |
 | Codex CLI | `~/.codex` | `~/.codex/hooks.json` | `~/.agents/skills` |
 | Gemini CLI | `~/.gemini` | `~/.gemini/settings.json` | `~/.agents/skills` |
+| Hermes Agent | `~/.hermes` | printed, to paste into `config.yaml` | `~/.hermes/skills` |
+| Cline | `~/.cline` | a file per event | `~/.cline/skills` |
 
 Editing the settings files needs `jq`; without it `install` prints what to add. In this mode the
 client updates itself: on every `xchg inbox` (that is, on every hook) it runs `git pull` in its own
@@ -121,8 +160,10 @@ every message is shown twice. `xchg status` prints which mode the client runs in
 3. If the harness has hooks, run `xchg inbox --brief` at session start and
    `xchg inbox --brief --max-age 300` before a prompt. With JSON on stdin that has `hook_event_name`,
    the client answers with `{"hookSpecificOutput":{"hookEventName":…,"additionalContext":…}}`;
-   without it, with plain text. The session start event must be named `SessionStart` to show
-   everything open; any other event shows only what is new.
+   without it, with plain text. `--hook-format` picks another shape: `hermes` answers with
+   `{"context":…}`, `cline` with `{"contextModification":…}`, `text` with plain text. The session
+   start event must be named `SessionStart` or `TaskStart` to show everything open, or pass
+   `--session`; any other event shows only what is new.
 
 ## Hooks and ssh
 

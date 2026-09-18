@@ -24,6 +24,8 @@ BRIEF=0                                # hook mode: report an unreachable hub at
 SHOW_ALL=0                             # show other projects too
 SHOW_HISTORY=0                         # show notes already read
 HOOK_EVENT=""                          # agent hook event (from JSON on stdin)
+HOOK_FORMAT=""                         # how the harness wants hook output: claude|hermes|cline|text
+HOOK_SESSION=0                         # the hook is the session-start one: show everything open
 PUSH_FAILED=0                          # a write stayed in the local hub clone: the command exits with 4
 # agent hooks run without ssh-agent in the environment: pick up the usual socket if present
 [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.ssh/agent.sock" ] && export SSH_AUTH_SOCK="$HOME/.ssh/agent.sock"
@@ -471,7 +473,8 @@ cmd_inbox() {
   while [ $# -gt 0 ]; do case "$1" in
     --brief) brief=1; BRIEF=1; shift;; --max-age) MAX_AGE="$2"; shift 2;; --hub) OPT_HUB="$2"; shift 2;;
     --all) SHOW_ALL=1; shift;; --history) SHOW_HISTORY=1; shift;;
-    *) udie "inbox [--brief] [--all] [--history] [--max-age N] [--hub H]";; esac; done
+    --hook-format) HOOK_FORMAT="$2"; shift 2;; --session) HOOK_SESSION=1; shift;;
+    *) udie "inbox [--brief] [--all] [--history] [--max-age N] [--hub H] [--hook-format F] [--session]";; esac; done
   if [ ${#HUBS[@]} -eq 0 ]; then [ "$brief" = 1 ] && return 0; require_hubs; fi
   local hubs; hubs=$(hub_filter); sync_hubs $hubs
   local out others unsent n mode=new
@@ -479,7 +482,8 @@ cmd_inbox() {
     # Hook: on session start, everything open (a new session doesn't remember the backlog); otherwise only
     # what this agent hasn't been shown yet, or the same lines would enter the context on every prompt.
     read_hook_input
-    [ "$HOOK_EVENT" = SessionStart ] && mode=all
+    case "$HOOK_EVENT" in SessionStart|TaskStart) mode=all;; esac
+    [ "$HOOK_SESSION" = 1 ] && mode=all
     out=$(inbox_lines $hubs)
     [ "$mode" = new ] && out=$(printf '%s\n' "$out" | unshown_lines)
     record_shown "$out"
@@ -529,17 +533,29 @@ unshown_lines() {  # stdin: inbox lines -> only those this agent hasn't been sho
 read_hook_input() {  # an agent hook passes JSON on stdin; run by hand, stdin is a terminal: don't wait
   [ -t 0 ] && return 0
   local j=""; IFS= read -r -t 1 -d '' j || true
-  HOOK_EVENT=$(printf '%s' "$j" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' | head -1)
+  HOOK_EVENT=$(printf '%s' "$j" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([A-Za-z_]*\)".*/\1/p' | head -1)
+  # a harness whose session-start hook can't answer marks the first turn of the session instead
+  case "$j" in *'"is_first_turn"'*) case "$j" in *'"is_first_turn": true'*|*'"is_first_turn":true'*) HOOK_SESSION=1;; esac;; esac
   return 0
 }
-# Hook events differ by harness, the output doesn't: session start (SessionStart) shows everything open, the
-# prompt event (UserPromptSubmit, BeforeAgent) only what is new. From a hook the text goes out as
-# hookSpecificOutput.additionalContext, the one form every supported harness adds to the model context
-# (some show plain stdout to the user instead). Nothing to say = 0 bytes, never "{}".
+# Hook events differ by harness, and so does the field a hook answers with: the text reaches the model as
+# hookSpecificOutput.additionalContext, as context, or as contextModification, depending on who asks.
+# The session-start event (SessionStart, TaskStart, --session) shows everything open, a prompt event
+# (UserPromptSubmit, BeforeAgent) only what is new. Plain stdout is the answer outside a hook; some
+# harnesses show it to the user instead of the model, so never rely on it there.
+# Nothing to say = 0 bytes, never "{}".
 hook_print() {  # <text>
   [ -n "$1" ] || return 0
-  if [ -z "$HOOK_EVENT" ]; then printf '%s\n' "$1"; return 0; fi
-  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$HOOK_EVENT" "$(printf '%s\n' "$1" | json_str)"
+  local fmt="$HOOK_FORMAT" body
+  [ -n "$fmt" ] || { [ -n "$HOOK_EVENT" ] && fmt=claude || fmt=text; }
+  [ "$fmt" = text ] && { printf '%s\n' "$1"; return 0; }
+  body=$(printf '%s\n' "$1" | json_str)
+  case "$fmt" in
+    claude) printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "${HOOK_EVENT:-SessionStart}" "$body";;
+    hermes) printf '{"context":"%s"}\n' "$body";;
+    cline)  printf '{"contextModification":"%s"}\n' "$body";;
+    *) die "unknown hook format '$fmt' (claude, hermes, cline, text)";;
+  esac
 }
 # "Muted" is a message not for this agent: don't show it and don't wake the agent. The mark is local and
 # per agent; nothing changes in the hub. The key is the file name, as for "shown".
@@ -909,8 +925,12 @@ cmd_sync() { require_hubs; [ "${1:-}" = --hub ] && OPT_HUB="$2"; local hubs unse
 # --- install and status ------------------------------------------------------------------------
 # Supported harnesses. For each: where its config lives, the hooks file, the session start and prompt
 # events, the timeout (unit differs by harness) and the skills directory it reads.
-HARNESSES="claude-code codex gemini"
-harness_info() {  # <harness> -> H_DIR H_HOOKS H_START H_PROMPT H_TIMEOUT H_SKILLS
+# H_STYLE says how the hooks are written: json (a settings file jq can edit), yaml (a snippet the user
+# pastes: editing YAML needs a tool we don't require) or scripts (an executable file per event).
+# H_FORMAT is the field the harness reads the answer from (see hook_print).
+HARNESSES="claude-code codex gemini hermes cline"
+harness_info() {  # <harness> -> H_DIR H_HOOKS H_START H_PROMPT H_TIMEOUT H_SKILLS H_STYLE H_FORMAT
+  H_STYLE=json; H_FORMAT=claude
   case "$1" in
     claude-code) H_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; H_HOOKS="$H_DIR/settings.json"
                  H_START=SessionStart; H_PROMPT=UserPromptSubmit; H_TIMEOUT=30; H_SKILLS="$H_DIR/skills";;
@@ -918,7 +938,22 @@ harness_info() {  # <harness> -> H_DIR H_HOOKS H_START H_PROMPT H_TIMEOUT H_SKIL
                  H_START=SessionStart; H_PROMPT=UserPromptSubmit; H_TIMEOUT=30; H_SKILLS="$HOME/.agents/skills";;
     gemini)      H_DIR="$HOME/.gemini"; H_HOOKS="$H_DIR/settings.json"
                  H_START=SessionStart; H_PROMPT=BeforeAgent; H_TIMEOUT=30000; H_SKILLS="$HOME/.agents/skills";;
+    # Hermes ignores what the session-start hook answers, so everything goes through the prompt hook:
+    # it marks the first turn of a session itself, and the client shows the whole inbox on that turn.
+    hermes)      H_DIR="$HOME/.hermes"; H_HOOKS="$H_DIR/config.yaml"
+                 H_START=""; H_PROMPT=pre_llm_call; H_TIMEOUT=10; H_SKILLS="$H_DIR/skills"
+                 H_STYLE=yaml; H_FORMAT=hermes;;
+    cline)       H_DIR="$HOME/.cline"; H_HOOKS="$(cline_hooks_dir)"
+                 H_START=TaskStart; H_PROMPT=UserPromptSubmit; H_TIMEOUT=""; H_SKILLS="$H_DIR/skills"
+                 H_STYLE=scripts; H_FORMAT=cline;;
   esac
+}
+# Cline keeps its global hooks outside its own directory, and where exactly depends on the build
+# (an open bug: the interface and the runtime disagree under WSL). Take the one that exists.
+cline_hooks_dir() {
+  local c; for c in "$HOME/Documents/Cline/Rules/Hooks" "$HOME/Documents/Cline/Hooks" "$HOME/Cline/Hooks"; do
+    [ -d "$c" ] && { echo "$c"; return 0; }; done
+  echo "$HOME/Documents/Cline/Rules/Hooks"
 }
 HOOK_START='xchg inbox --brief 2>/dev/null || true'
 HOOK_PROMPT='xchg inbox --brief --max-age 300 2>/dev/null || true'
@@ -939,16 +974,36 @@ cmd_install() {
   mkdir -p "$HOME/.local/bin"; ln -sfn "$XCHG_ROOT/bin/xchg" "$HOME/.local/bin/xchg"
   echo "symlink: ~/.local/bin/xchg -> $XCHG_ROOT/bin/xchg"
   case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "WARNING: ~/.local/bin is not on PATH, add to ~/.bashrc: export PATH=\"\$HOME/.local/bin:\$PATH\"";; esac
-  local hn found=0 sk
+  local hn found=0 sk ev hcmd
   for hn in $HARNESSES; do harness_info "$hn"; [ -d "$H_DIR" ] || continue; found=1
     echo "$hn ($H_DIR):"
     mkdir -p "$H_SKILLS"
     for sk in "$XCHG_ROOT"/skills/*/; do sk="${sk%/}"; ln -sfn "$sk" "$H_SKILLS/$(basename "$sk")"; echo "  skill $(basename "$sk") -> $H_SKILLS"; done
-    if have jq; then add_hook "$H_HOOKS" "$H_START" "$HOOK_START" "$H_TIMEOUT"; add_hook "$H_HOOKS" "$H_PROMPT" "$HOOK_PROMPT" "$H_TIMEOUT"
-    else echo "  no jq: add to $H_HOOKS hooks $H_START: '$HOOK_START' and $H_PROMPT: '$HOOK_PROMPT' (timeout $H_TIMEOUT)"; fi
+    case "$H_STYLE" in
+      json)
+        if have jq; then add_hook "$H_HOOKS" "$H_START" "$HOOK_START" "$H_TIMEOUT"; add_hook "$H_HOOKS" "$H_PROMPT" "$HOOK_PROMPT" "$H_TIMEOUT"
+        else echo "  no jq: add to $H_HOOKS hooks $H_START: '$HOOK_START' and $H_PROMPT: '$HOOK_PROMPT' (timeout $H_TIMEOUT)"; fi;;
+      yaml)
+        if grep -q 'xchg inbox --brief' "$H_HOOKS" 2>/dev/null; then echo "  hook $H_PROMPT already present in $H_HOOKS"
+        else
+          echo "  add to $H_HOOKS (a YAML file is yours to edit, the client doesn't rewrite it):"
+          printf '    hooks:\n      %s:\n        - command: "%s"\n          timeout: %s\n' \
+            "$H_PROMPT" "xchg inbox --brief --max-age 300 --hook-format $H_FORMAT 2>/dev/null || true" "$H_TIMEOUT"
+          echo "  a new hook command asks for your consent the first time it runs"
+        fi;;
+      scripts)
+        mkdir -p "$H_HOOKS"
+        for ev in "$H_START" "$H_PROMPT"; do
+          hcmd="xchg inbox --brief --hook-format $H_FORMAT"
+          if [ "$ev" = "$H_START" ]; then hcmd="$hcmd --session"; else hcmd="$hcmd --max-age 300"; fi
+          printf '#!/bin/sh\n# written by xchg install\n%s 2>/dev/null || true\n' "$hcmd" > "$H_HOOKS/$ev"
+          chmod +x "$H_HOOKS/$ev"; echo "  hook $ev -> $H_HOOKS/$ev"
+        done
+        echo "  these hooks run on macOS and Linux only";;
+    esac
     [ "$hn" = codex ] && echo "  codex runs a new hook only after you trust it: open /hooks in a session"
   done
-  [ "$found" = 1 ] || echo "no supported harness found (looked for: ~/.claude, ~/.codex, ~/.gemini): start your agent once and run xchg install again"
+  [ "$found" = 1 ] || echo "no supported harness found (looked for: ~/.claude, ~/.codex, ~/.gemini, ~/.hermes, ~/.cline): start your agent once and run xchg install again"
   ensure_conf
   [ -n "$CFG_DEFAULT" ] || { [ ${#HUBS[@]} -gt 0 ] && conf_set_global default "${HUBS[0]}"; }
   echo "done. Connect to a hub: xchg hub add work <remote>; create your own: xchg hub init work --remote <url>"
@@ -966,8 +1021,10 @@ cmd_status() {
   if [ "$PLUGIN_MODE" = 1 ]; then echo "hooks and skills: from the harness package"; return 0; fi
   local hn ok
   for hn in $HARNESSES; do harness_info "$hn"; [ -d "$H_DIR" ] || continue
-    ok() { grep -q "$1" "$H_HOOKS" 2>/dev/null && echo ok || echo MISSING; }
-    echo "$hn: hooks $H_START $(ok 'xchg inbox --brief'), $H_PROMPT $(ok 'xchg inbox --brief --max-age'); skill: $(readlink "$H_SKILLS/exchange" 2>/dev/null || echo 'no symlink')"
+    # the hooks of a harness live either in one file or in a file per event
+    ok() { if [ "$H_STYLE" = scripts ]; then [ -f "$H_HOOKS/$2" ]; else grep -q "$1" "$H_HOOKS" 2>/dev/null; fi && echo ok || echo MISSING; }
+    if [ -n "$H_START" ]; then echo "$hn: hooks $H_START $(ok 'xchg inbox --brief' "$H_START"), $H_PROMPT $(ok 'xchg inbox --brief --max-age' "$H_PROMPT"); skill: $(readlink "$H_SKILLS/exchange" 2>/dev/null || echo 'no symlink')"
+    else echo "$hn: hook $H_PROMPT $(ok 'xchg inbox --brief' "$H_PROMPT"); skill: $(readlink "$H_SKILLS/exchange" 2>/dev/null || echo 'no symlink')"; fi
   done
 }
 cmd_version() {  # a commit in a developer clone, the manifest version in an installed package
@@ -983,7 +1040,8 @@ Address: [hub:]part[:part] — all | @project | person | @project:person (part o
   all              everyone in the hub     @api          everyone on the project
   bob              a person                @api:bob      an agent: person x project
 
-  inbox [--brief] [--all] [--history] [--max-age N] [--hub H]   what came to me
+  inbox [--brief] [--all] [--history] [--max-age N] [--hub H] [--hook-format F] [--session]
+                                                 what came to me
   wait [--timeout sec] [--interval sec]     wait for a new message without the model (0 arrived, 3 timeout)
   read <file>                               read a whole message
   send <address> <slug> [--re f] [--ref x]  task: do it once, it gets closed

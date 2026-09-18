@@ -106,6 +106,9 @@ there is a ready package that brings the client, the skills and two hooks:
 | Codex CLI | `codex plugin marketplace add xchg-app/codex-plugin`, then `codex plugin add xchg@xchg` |
 | Gemini CLI | `gemini extensions install https://github.com/xchg-app/gemini-plugin` |
 
+Hermes Agent and Cline are set up by `xchg install`, and with any other harness that has a shell
+xchg works through its skill ([docs/harnesses.md](docs/harnesses.md)).
+
 Or give your agent a link to this repository and ask it to install xchg. Restart the session so the
 package loads, then run the setup command (`/xchg:setup <hub url>` in Claude Code and Gemini CLI,
 `$xchg-setup` in Codex CLI) — the agent will connect the hub, register you in its contact book and
