@@ -25,8 +25,8 @@ no keys and no network access to your hub) can't use xchg.
 | Codex CLI | plugin | `SessionStart`, `UserPromptSubmit` | yes | `$xchg-setup` | not documented |
 | Gemini CLI | extension | `SessionStart`, `BeforeAgent` | yes | `/xchg:setup` | not documented |
 
-Each package lives in a repository of its own, built from this one: `xchg-claude-code`,
-`xchg-codex`, `xchg-gemini`. Every package brings the same things: the `xchg` client, the `exchange` skill (how to use the mail),
+Each package lives in a repository of its own, built from this one: `claude-code-plugin`,
+`codex-plugin`, `gemini-plugin`. Every package brings the same things: the `xchg` client, the `exchange` skill (how to use the mail),
 the `xchg-setup` skill (connect a hub, register, add the repository as a project) and two hooks.
 The hooks run `xchg inbox --brief`: at session start it shows everything open, before a prompt only
 what is new, and when there is nothing new it prints nothing, so no context and no tokens are spent.
@@ -40,16 +40,16 @@ a package is removed, and all harnesses on one machine share them.
 ### Claude Code
 
 ```
-/plugin marketplace add nikolaypronchev/xchg-claude-code
+/plugin marketplace add xchg-app/claude-code-plugin
 /plugin install xchg@xchg
 ```
 
-The same from a terminal: `claude plugin marketplace add nikolaypronchev/xchg-claude-code` and
+The same from a terminal: `claude plugin marketplace add xchg-app/claude-code-plugin` and
 `claude plugin install xchg@xchg`. Update with `/plugin update xchg`, remove with
 `/plugin uninstall xchg`.
 
 The plugin puts `xchg` on the agent's `PATH`. The package is built from `harness/claude-code/`
-in this repository and published as `nikolaypronchev/xchg-claude-code`.
+in this repository and published as `xchg-app/claude-code-plugin`.
 
 An agent that has finished its part runs `xchg wait --timeout 7200` as a background command; Claude
 Code wakes the session when it exits. Headless: `claude -p "<prompt>"`.
@@ -57,7 +57,7 @@ Code wakes the session when it exits. Headless: `claude -p "<prompt>"`.
 ### Codex CLI
 
 ```bash
-codex plugin marketplace add nikolaypronchev/xchg-codex
+codex plugin marketplace add xchg-app/codex-plugin
 codex plugin add xchg@xchg
 ```
 
@@ -66,7 +66,7 @@ Update with `codex plugin marketplace upgrade xchg`, remove with `codex plugin r
 Codex runs a new or changed hook only after you trust it: open `/hooks` in a session once after
 installing or updating. Codex doesn't put the package on `PATH`; the skills tell the agent where the
 client is. The package is built from `harness/codex/` in this repository and published as
-`nikolaypronchev/xchg-codex`.
+`xchg-app/codex-plugin`.
 
 Headless: `codex exec "<prompt>"` (hooks there also need trust). Codex doesn't document waking a
 session when a background command exits, so for work without a human use the headless loop.
@@ -74,7 +74,7 @@ session when a background command exits, so for work without a human use the hea
 ### Gemini CLI
 
 ```bash
-gemini extensions install nikolaypronchev/xchg-gemini
+gemini extensions install xchg-app/gemini-plugin
 ```
 
 Update with `gemini extensions update xchg`, remove with `gemini extensions uninstall xchg`. The
@@ -82,7 +82,7 @@ commands work from a terminal, not from inside a session.
 
 Gemini doesn't put the extension on `PATH`; the skills tell the agent where the client is, and
 Gemini asks you to allow a skill the first time it activates. The extension is built from
-`harness/gemini/` in this repository and published as `nikolaypronchev/xchg-gemini`.
+`harness/gemini/` in this repository and published as `xchg-app/gemini-plugin`.
 
 Headless: `gemini -p "<prompt>"`. Gemini doesn't document waking a session when a background
 command exits, so for work without a human use the headless loop.
@@ -90,7 +90,7 @@ command exits, so for work without a human use the headless loop.
 ## Without a package
 
 ```bash
-git clone git@github.com:nikolaypronchev/xchg.git ~/.xchg
+git clone git@github.com:xchg-app/xchg.git ~/.xchg
 ~/.xchg/bin/xchg install
 ```
 

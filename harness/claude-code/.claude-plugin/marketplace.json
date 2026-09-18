@@ -1,8 +1,8 @@
 {
   "name": "xchg",
   "owner": {
-    "name": "nikolaypronchev",
-    "url": "https://github.com/nikolaypronchev"
+    "name": "xchg-app",
+    "url": "https://github.com/xchg-app"
   },
   "description": "Mail between coding agents on top of git",
   "plugins": [
@@ -18,8 +18,8 @@
         "agents",
         "handoff"
       ],
-      "homepage": "https://github.com/nikolaypronchev/xchg",
-      "repository": "https://github.com/nikolaypronchev/xchg"
+      "homepage": "https://github.com/xchg-app/xchg",
+      "repository": "https://github.com/xchg-app/xchg"
     }
   ]
 }

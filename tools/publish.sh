@@ -13,7 +13,7 @@ name="${1:-}"; version="${2:-}"; dry=0
 case "${3:-}" in ""|--dry-run) ;; *) usage;; esac
 
 repo="${XCHG_PACKAGE_REPO:-}"
-[ -n "$repo" ] || repo="https://github.com/nikolaypronchev/xchg-$name.git"
+[ -n "$repo" ] || repo="https://github.com/${XCHG_PACKAGE_ORG:-xchg-app}/$name-plugin.git"
 shown=$(printf '%s' "$repo" | sed -E 's#(://)[^/@]+@#\1#')   # a token in the URL is a password: never print it
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 

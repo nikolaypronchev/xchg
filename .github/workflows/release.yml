@@ -35,7 +35,7 @@ jobs:
           done
       - name: publish ${{ matrix.harness }}
         env:
-          XCHG_PACKAGE_REPO: https://x-access-token:${{ secrets.PACKAGE_REPOS_TOKEN }}@github.com/${{ github.repository_owner }}/xchg-${{ matrix.harness }}.git
+          XCHG_PACKAGE_REPO: https://x-access-token:${{ secrets.PACKAGE_REPOS_TOKEN }}@github.com/${{ github.repository_owner }}/${{ matrix.harness }}-plugin.git
           GIT_AUTHOR_NAME: xchg release
           GIT_AUTHOR_EMAIL: noreply@github.com
         run: tools/publish.sh "${{ matrix.harness }}" "${{ steps.v.outputs.version }}"

@@ -35,4 +35,4 @@
 
 ## Workflow
 - Ветка `main`, коммиты однострочные.
-- Релиз: поднял `version` (одинаково в `harness/claude-code/.claude-plugin/plugin.json`, `harness/codex/.codex-plugin/plugin.json`, `harness/gemini/gemini-extension.json`) — на этот же коммит аннотированный тег `v<версия>` (`git tag -a v0.1.11 -m v0.1.11`) и `git push --tags`. Bump версии и тег — один коммит; по тегу версия клиента закрепляется в чужих сборках. Дальше по тегу `.github/workflows/release.yml` пересобирает три пакета и перезаписывает репозитории `xchg-claude-code`, `xchg-codex`, `xchg-gemini` тем же тегом.
+- Релиз: поднял `version` (одинаково в `harness/claude-code/.claude-plugin/plugin.json`, `harness/codex/.codex-plugin/plugin.json`, `harness/gemini/gemini-extension.json`) — на этот же коммит аннотированный тег `v<версия>` (`git tag -a v0.1.11 -m v0.1.11`) и `git push --tags`. Bump версии и тег — один коммит; по тегу версия клиента закрепляется в чужих сборках. Дальше по тегу `.github/workflows/release.yml` пересобирает три пакета и перезаписывает репозитории `claude-code-plugin`, `codex-plugin`, `gemini-plugin` тем же тегом.

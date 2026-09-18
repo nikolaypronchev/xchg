@@ -31,9 +31,9 @@ tags: [memory/repo, architecture]
 
 | харнесс | исходник пакета | репозиторий пакета | манифест | хуки | как попадает клиент |
 |---|---|---|---|---|---|
-| Claude Code | `harness/claude-code/` | `xchg-claude-code` | `.claude-plugin/plugin.json`; маркетплейс `.claude-plugin/marketplace.json` → `./` | `hooks/hooks.json` (подхватывается сам), `${CLAUDE_PLUGIN_ROOT}` | `bin/` в PATH |
-| Codex CLI | `harness/codex/` | `xchg-codex` | `.codex-plugin/plugin.json`; маркетплейс `.agents/plugins/marketplace.json` → `./` | `hooks/hooks.json` (стандартный путь), `${PLUGIN_ROOT}` | в PATH не попадает — путь говорит скилл |
-| Gemini CLI | `harness/gemini/` | `xchg-gemini` | `gemini-extension.json` | `hooks/hooks.json` (событие `BeforeAgent`, таймаут в мс), `${extensionPath}` | в PATH не попадает |
+| Claude Code | `harness/claude-code/` | `claude-code-plugin` | `.claude-plugin/plugin.json`; маркетплейс `.claude-plugin/marketplace.json` → `./` | `hooks/hooks.json` (подхватывается сам), `${CLAUDE_PLUGIN_ROOT}` | `bin/` в PATH |
+| Codex CLI | `harness/codex/` | `codex-plugin` | `.codex-plugin/plugin.json`; маркетплейс `.agents/plugins/marketplace.json` → `./` | `hooks/hooks.json` (стандартный путь), `${PLUGIN_ROOT}` | в PATH не попадает — путь говорит скилл |
+| Gemini CLI | `harness/gemini/` | `gemini-plugin` | `gemini-extension.json` | `hooks/hooks.json` (событие `BeforeAgent`, таймаут в мс), `${extensionPath}` | в PATH не попадает |
 
 Сборка — `tools/package.sh <харнесс> <каталог>`: кладёт файлы `harness/<имя>/` и настоящие копии
 `bin/`, `skills/`, `hub/`, `LICENSE` плюс сгенерированный README. Публикация —

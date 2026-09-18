@@ -89,7 +89,7 @@ for f in hooks commands gemini-extension.json .claude-plugin .codex-plugin .agen
   [ -e "$ROOT/$f" ] && fail "the root holds $f, which belongs to one harness" || ok "the root is free of $f"
 done
 # the package repositories are built, never written by hand: publishing overwrites them whole
-BARE="$SB/xchg-gemini.git"; git init -q --bare "$BARE"
+BARE="$SB/gemini-plugin.git"; git init -q --bare "$BARE"
 run env XCHG_PACKAGE_REPO="$BARE" "$ROOT/tools/publish.sh" gemini "$VER"; assert_eq "$RC" 0 "the package is published"
 run git -C "$BARE" show "v$VER:gemini-extension.json"; assert_contains "$OUT" "\"version\": \"$VER\"" "the tag v$VER carries the package"
 run git -C "$BARE" show "v$VER:bin/xchg"; assert_contains "$OUT" "xchg"
